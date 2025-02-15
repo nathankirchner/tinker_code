@@ -159,51 +159,51 @@ else:  # macOS and Linux
 
 # messagebox.showinfo("Complete", "Analysis complete! Check the selected directory for results.")
 
-# Generate summary of findings across all images
-print("\n=== ANALYSIS SUMMARY ACROSS ALL IMAGES ===")
+# # Generate summary of findings across all images
+# print("\n=== ANALYSIS SUMMARY ACROSS ALL IMAGES ===")
 
-# Common elements
-print("\nCommon Elements:")
-common_elements = set.intersection(*[set(img_data['elements']) for img_data in image_data_list])
-for element in common_elements:
-    print(f"- {element}")
+# # Common elements
+# print("\nCommon Elements:")
+# common_elements = set.intersection(*[set(img_data['elements']) for img_data in image_data_list])
+# for element in common_elements:
+#     print(f"- {element}")
 
-# Differences
-print("\nDifferences:")
-all_elements = set.union(*[set(img_data['elements']) for img_data in image_data_list])
-varying_elements = all_elements - common_elements
-for element in varying_elements:
-    count = sum(1 for img_data in image_data_list if element in img_data['elements'])
-    print(f"- {element} (present in {count}/{len(image_data_list)} images)")
+# # Differences
+# print("\nDifferences:")
+# all_elements = set.union(*[set(img_data['elements']) for img_data in image_data_list])
+# varying_elements = all_elements - common_elements
+# for element in varying_elements:
+#     count = sum(1 for img_data in image_data_list if element in img_data['elements'])
+#     print(f"- {element} (present in {count}/{len(image_data_list)} images)")
 
-# Anomalies
-print("\nAnomalies:")
-anomalies_found = False
-for i, img_data in enumerate(image_data_list):
-    if img_data['anomalies']:
-        anomalies_found = True
-        print(f"Image {i+1}:")
-        for anomaly in img_data['anomalies']:
-            print(f"- {anomaly}")
-if not anomalies_found:
-    print("No anomalies detected")
+# # Anomalies
+# print("\nAnomalies:")
+# anomalies_found = False
+# for i, img_data in enumerate(image_data_list):
+#     if img_data['anomalies']:
+#         anomalies_found = True
+#         print(f"Image {i+1}:")
+#         for anomaly in img_data['anomalies']:
+#             print(f"- {anomaly}")
+# if not anomalies_found:
+#     print("No anomalies detected")
 
-# Trends
-print("\nTrends:")
-# Analyze size trends
-sizes = [img_data['size'] for img_data in image_data_list]
-avg_size = sum(sizes) / len(sizes)
-print(f"- Average image size: {avg_size:.2f} bytes")
+# # Trends
+# print("\nTrends:")
+# # Analyze size trends
+# sizes = [img_data['size'] for img_data in image_data_list]
+# avg_size = sum(sizes) / len(sizes)
+# print(f"- Average image size: {avg_size:.2f} bytes")
 
-# Analyze element count trends
-element_counts = [len(img_data['elements']) for img_data in image_data_list]
-avg_elements = sum(element_counts) / len(element_counts)
-print(f"- Average number of elements per image: {avg_elements:.1f}")
+# # Analyze element count trends
+# element_counts = [len(img_data['elements']) for img_data in image_data_list]
+# avg_elements = sum(element_counts) / len(element_counts)
+# print(f"- Average number of elements per image: {avg_elements:.1f}")
 
-# Check for consistent patterns
-if len(common_elements) > len(varying_elements):
-    print("- Images show high consistency in elements")
-elif len(varying_elements) > len(common_elements):
-    print("- Images show significant variation in elements")
+# # Check for consistent patterns
+# if len(common_elements) > len(varying_elements):
+#     print("- Images show high consistency in elements")
+# elif len(varying_elements) > len(common_elements):
+#     print("- Images show significant variation in elements")
 
-print("\n" + "="*40)
+# print("\n" + "="*40)
