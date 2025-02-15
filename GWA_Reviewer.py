@@ -2,7 +2,7 @@ import os
 import csv
 import matplotlib.pyplot as plt
 from PIL import Image
-from ultralytics import YOLO
+from ultralytics import YOLO 
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
