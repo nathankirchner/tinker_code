@@ -2,14 +2,11 @@ import os
 import csv
 import matplotlib.pyplot as plt
 from PIL import Image
-from ultralytics import YOLO 
+from ultralytics import YOLO
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from wordcloud import WordCloud
-import numpy as np
 import requests
 import base64
-import subprocess
 
 def select_directory(prompt):
     root = tk.Tk()
@@ -23,8 +20,59 @@ def select_file(prompt):
     file_path = filedialog.askopenfilename(title=prompt)
     return file_path
 
+def analyze_images(image_paths, api_key):
+    results = []
+    for image_path in image_paths:
+        try:
+            base64_image = encode_image(image_path)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image, with particular attention to any people and their approximate distance from the camera. If you see people, explicitly state whether they are within a few meters of the camera."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ]
+            response = make_api_call(messages, api_key)
+            results.append({
+                'image_path': image_path,
+                'analysis': response['choices'][0]['message']['content']
+            })
+        except Exception as e:
+            print(f"Error analyzing {image_path}: {str(e)}")
+            continue
+    return results
+
+def make_api_call(messages, api_key):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "model": "gpt-4-vision-preview",
+        "messages": messages,
+        "max_tokens": 500
+    }
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers=headers,
+        json=payload
+    )
+    return response.json()
+
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
 # Initialize YOLO model
 model = YOLO('yolov8n.pt')  # Load YOLOv8 nano model
+
+# Get API key from environment variable or user input
+api_key = os.getenv('OPENAI_API_KEY')
+if not api_key:
+    # api_key = input("Please enter your OpenAI API key: ")
+    api_key = "sk-proj-0Jxtb5T7SSAQzaMsHqLjNIOJSlRhVm05NCwU76fPvY6xQ1c_R0UCkI5MCVJQmGUSMTЗSz2EkQfТЗB1bkFJuUS2ZcUbVоKNabYZdbЗTRЗG6RJ4QgkEbbzkUqIrqг1BnFFj7TX0V1aBIPI0tcf5CxDAed_UEgA"
 
 # Try to find specific image directory first, fall back to user selection if not found
 default_image_dir = "/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/20250214 Raw Data IMS"
@@ -56,29 +104,23 @@ person_count_distribution = {0: 0}  # Initialize with 0 people count
 # Initialize before the image processing loop
 image_data_list = []
 
-# Get API key from environment variable or ask user
-api_key = os.getenv('OPENAI_API_KEY')
-if not api_key:
-    api_key = input("Please enter your OpenAI API key: ")
+# Initialize list to store images with nearby people
+images_with_nearby_people = []
 
 # Analyze images
 for filename in os.listdir(image_dir):
     if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
         image_path = os.path.join(image_dir, filename)
         try:
-            # YOLO Analysis
+            # Analyze image
             print(f"Analysing {filename}")
-            results = model(image_path)[0]
-            detected_classes = results.boxes.cls
-            class_names = [results.names[int(cls)] for cls in detected_classes]
+            results = model(image_path)[0]  # Get results for first image
+            detected_classes = results.boxes.cls  # Get class indices
+            class_names = [results.names[int(cls)] for cls in detected_classes]  # Convert to class names
             
-            # GPT-4 Vision Analysis
-            gpt_analysis = analyze_images([image_path], api_key)[0]
-            
-            # Update existing counters and distributions
+            # Count people in this image
             people_count = class_names.count('person')
             print(f"FOUND: {class_names} (People count: {people_count})")
-            print(f"GPT Analysis: {gpt_analysis['analysis']}\n")
             
             # Update person count distribution
             if people_count in person_count_distribution:
@@ -86,23 +128,42 @@ for filename in os.listdir(image_dir):
             else:
                 person_count_distribution[people_count] = 1
 
-            # Count matching categories
+            # Count matching categories (check all detected objects)
             for detected_class in class_names:
                 for category in categories:
                     if category.lower() in detected_class.lower():
                         category_counts[category] += 1
                         break
 
-            # Add image data to list with GPT analysis
+            # Add image data to list
             image_data = {
                 'elements': class_names,
                 'size': os.path.getsize(image_path),
-                'anomalies': [],
-                'gpt_analysis': gpt_analysis['analysis']
+                'anomalies': []  # Add anomalies if you detect any
             }
             image_data_list.append(image_data)
             
             total_images += 1
+
+            # GPT-4 Vision Analysis with specific prompt about people's proximity
+            base64_image = encode_image(image_path)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image, with particular attention to any people and their approximate distance from the camera. If you see people, explicitly state whether they are within a few meters of the camera."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ]
+            
+            gpt_analysis = analyze_images([image_path], api_key)[0]
+            description = gpt_analysis['analysis']
+            
+            # Check if description indicates people nearby
+            nearby_indicators = ['within a few meters', 'close to camera', 'nearby', 'close-up', 'foreground']
+            if any(indicator in description.lower() for indicator in nearby_indicators):
+                images_with_nearby_people.append(filename)
         except Exception as e:
             print(f"Error processing {filename}: {str(e)}")
 
@@ -163,11 +224,12 @@ with open(csv_path, 'w', newline='') as f:
 
 # Open both pie charts with default viewer
 if os.name == 'nt':  # Windows
-    os.startfile(chart_path)
+    # os.startfile(chart_path)
     os.startfile(person_chart_path)
 else:  # macOS and Linux
+    import subprocess
     opener = 'open' if os.name == 'posix' else 'xdg-open'
-    subprocess.call([opener, chart_path])
+    # subprocess.call([opener, chart_path])
     subprocess.call([opener, person_chart_path])
 
 # messagebox.showinfo("Complete", "Analysis complete! Check the selected directory for results.")
@@ -221,88 +283,26 @@ else:  # macOS and Linux
 
 # print("\n" + "="*40)
 
-def analyze_images(image_paths, api_key):
-    scene_descriptions = []  # List to store scene descriptions
-    results = []
- 
-    for image_path in image_paths:
+# After all images are processed, print the results
+print("\n=== Images with People Near Camera ===")
+if images_with_nearby_people:
+    for image in images_with_nearby_people:
+        print(f"- {image}")
+else:
+    print("No images found with people close to the camera")
+
+# After all images are processed
+print("\n=== GPT-4 Vision Descriptions ===")
+print("="*40)
+for filename in os.listdir(image_dir):
+    if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        image_path = os.path.join(image_dir, filename)
         try:
-            # Encode image
-            base64_image = encode_image(image_path)
-            
-            # Prepare messages for both analysis types
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Analyze this image and provide: 1) A detailed scene description 2) The dominant colors 3) The overall mood/atmosphere"},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ]
-            
-            # Make API call
-            response = make_api_call(messages, api_key)
-            
-            # Extract scene description from the response
-            scene_description = response['choices'][0]['message']['content']
-            scene_descriptions.append(scene_description)
-            
-            # Store the full analysis result
-            results.append({
-                'image_path': image_path,
-                'analysis': response['choices'][0]['message']['content']
-            })
-            
+            gpt_analysis = analyze_images([image_path], api_key)[0]
+            print(f"\nFile: {filename}")
+            print("-"*40)
+            print(gpt_analysis['analysis'])
+            print("="*40)
         except Exception as e:
-            print(f"Error analyzing {image_path}: {str(e)}")
-            continue
-    
-    # Create wordcloud after all images are analyzed
-    if scene_descriptions:
-        create_wordcloud(scene_descriptions)
-    
-    return results
-
-def create_wordcloud(descriptions):
-    # Combine all descriptions into one text
-    text = ' '.join(descriptions)
-    
-    # Create and generate a word cloud image
-    wordcloud = WordCloud(
-        width=800, 
-        height=400,
-        background_color='white',
-        max_words=100
-    ).generate(text)
-    
-    # Display the word cloud
-    plt.figure(figsize=(10, 5))
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis('off')
-    plt.title('Word Cloud from Scene Descriptions')
-    
-    # Save the wordcloud
-    plt.savefig('scene_descriptions_wordcloud.png')
-    plt.close()
-
-def make_api_call(messages, api_key):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    payload = {
-        "model": "gpt-4-vision-preview",
-        "messages": messages,
-        "max_tokens": 500
-    }
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers=headers,
-        json=payload
-    )
-    return response.json()
-
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+            print(f"\nError getting description for {filename}: {str(e)}")
+            print("="*40)
