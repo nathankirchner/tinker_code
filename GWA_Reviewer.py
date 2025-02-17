@@ -4,9 +4,9 @@ import base64
 import requests
 from pathlib import Path
 
-DEFAULT_IMAGE_DIR = "/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/20250214 Raw Data IMS"
-DEFAULT_QUESTIONS_PATH = "/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/questions_to_ask.txt"
-OUTPUT_DIR = "/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/OUTPUT"
+DEFAULT_IMAGE_DIR = os.path.join(os.getcwd(), "/IM_TEXT_DESCRIPTION")
+DEFAULT_QUESTIONS_PATH = os.path.join(os.getcwd(), "questions_to_ask.txt")
+OUTPUT_DIR = os.path.join(os.getcwd(), "OUTPUT")
 
 def get_api_key():
     api_key = os.getenv('OPENAI_API_KEY')

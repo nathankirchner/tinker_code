@@ -15,7 +15,7 @@ from nltk.corpus import stopwords
 nltk.download('stopwords', quiet=True)
 
 # Use Path for better path handling
-BASE_DIR = Path("/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/OUTPUT/IM_TEXT_DESCRIPTION")
+BASE_DIR = Path(__file__).parent
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 def read_text_file(filepath):
@@ -120,25 +120,59 @@ class ReportTemplate(BaseDocTemplate):
     
     def on_later_pages(self, canvas, doc):
         # Add logo to footer
-        logo_path = Path("/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/OUTPUT/IM_TEXT_DESCRIPTION/20250214 GWA Logo LONG WHITE LIGHT.png")
+        logo_path = BASE_DIR/ "IM_TEXT_DESCRIPTION" / "20250214 GWA Logo LONG WHITE LIGHT.png"
         if logo_path.exists():
             # Calculate position for center of page
             page_width = A4[0]
-            logo_width = 2.5*inch  # Increased width for longer logo
-            logo_height = 0.5*inch  # Keep same height
-            x_position = (page_width - logo_width) / 2
+            logo_width = 1.3*inch
+            logo_height = 0.4*inch
+            x_position = 1*inch
             
+            # Draw horizontal line at top of footer
+            canvas.setStrokeColor(colors.HexColor('#CCCCCC'))
+            canvas.line(
+                inch,
+                0.8*inch,
+                page_width - inch,
+                0.8*inch
+            )
+            
+            # Draw logo
             canvas.drawImage(
                 str(logo_path),
                 x_position,
-                0.25*inch,  # Position from bottom
+                0.25*inch,
                 width=logo_width,
                 height=logo_height
+            )
+            
+            # Add URLs to center of footer
+            canvas.setFont("Helvetica", 5)
+            canvas.setFillColor(colors.HexColor('#AAAAAA'))
+            
+            # Calculate center position
+            center_x = page_width / 2
+            canvas.drawCentredString(
+                center_x,
+                0.45*inch,  # Top URL
+                "https://greywalladvisory.com"
+            )
+            canvas.drawCentredString(
+                center_x,
+                0.35*inch,  # Bottom URL
+                "https://www.linkedin.com/in/nkirchner/"
+            )
+            
+            # Add text to right side of footer
+            canvas.drawRightString(
+                page_width - inch,
+                0.4*inch,
+                "202502 Kirchner"
             )
 
 def create_report():
     # Setup document
-    output_file = BASE_DIR / f"Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    output_file = BASE_DIR / "OUTPUT" / f"Report_{datetime.now().strftime('%Y%m%d')}.pdf"
     doc = ReportTemplate(
         str(output_file),
         pagesize=A4,
@@ -169,23 +203,30 @@ def create_report():
     story = []
     
     # Cover page
-    cover_image_path = BASE_DIR / "20250217 GWA Reviewer Report Cover.png"
+    cover_image_path = BASE_DIR / "IM_TEXT_DESCRIPTION" / "20250217 GWA Reviewer Report Cover.png"
     if cover_image_path.exists():
-        story.append(NextPageTemplate('Later'))  # Switch to template with footer after first page
+        story.append(NextPageTemplate('Later'))
+        # Calculate center position
+        page_width = A4[0] - 2*inch  # Account for margins
+        margin_space = (page_width - 5.8*inch) / 2
+        story.append(Spacer(1, 0.5*inch))  # Top margin
+        
         cover_img_first = Image(str(cover_image_path))
-        cover_img_first.drawHeight = 8*inch  # Reduced from 9 to 8 inches
-        cover_img_first.drawWidth = 6*inch   # Reduced from 7 to 6 inches
+        cover_img_first.drawHeight = 8*inch
+        cover_img_first.drawWidth = 5.8*inch
+        cover_img_first.hAlign = 'CENTER'  # Center horizontally
+        
         story.append(cover_img_first)
         story.append(PageBreak())
     
     # First page
     story.append(Paragraph("Image Analysis Report <br/><br/> GWA Reviewer AI", title_style))
-    story.append(Paragraph(read_text_file(BASE_DIR / "report preamble.txt"), normal_style))
+    story.append(Paragraph(read_text_file(BASE_DIR / "IM_TEXT_DESCRIPTION" / "report preamble.txt"), normal_style))
     story.append(Spacer(1, 20))
     story.append(Paragraph("Executive Summary", heading_style))
-    story.append(Paragraph(read_text_file(BASE_DIR / "executive summary.txt"), normal_style))
+    story.append(Paragraph(read_text_file(BASE_DIR / "IM_TEXT_DESCRIPTION" / "executive summary.txt"), normal_style))
     story.append(Paragraph("Aggregated Summary", heading_style))
-    story.append(Paragraph(read_text_file(BASE_DIR / "aggregated summary.txt"), normal_style))
+    story.append(Paragraph(read_text_file(BASE_DIR / "IM_TEXT_DESCRIPTION" / "aggregated summary.txt"), normal_style))
     story.append(PageBreak())
 
     # Image analysis pages
@@ -196,8 +237,8 @@ def create_report():
     ]
 
     for screenshot in screenshots:
-        img_path = BASE_DIR / f"{screenshot}.png"
-        txt_path = BASE_DIR / f"{screenshot}.txt"
+        img_path = BASE_DIR / "IM_TEXT_DESCRIPTION" / f"{screenshot}.png"
+        txt_path = BASE_DIR / "IM_TEXT_DESCRIPTION" / f"{screenshot}.txt"
         
         if img_path.exists():
             story.append(Paragraph(screenshot, heading_style))
@@ -227,13 +268,13 @@ def create_report():
         # Read insights from file
         story.append(Spacer(1, 20))
         story.append(Paragraph("Key Insights:", heading_style))
-        insights = read_text_file(BASE_DIR / "report insights.txt")
+        insights = read_text_file(BASE_DIR / "IM_TEXT_DESCRIPTION" / "report insights.txt")
         story.append(Paragraph(insights, normal_style))
-        story.append(PageBreak())
+        #story.append(PageBreak())
 
     # Final page
     story.append(Paragraph("Conclusion", heading_style))
-    story.append(Paragraph(read_text_file(BASE_DIR / "report conclusion.txt"), normal_style))
+    story.append(Paragraph(read_text_file(BASE_DIR / "IM_TEXT_DESCRIPTION" / "report conclusion.txt"), normal_style))
 
     # Before final cover page
     story.append(NextPageTemplate('Last'))  # Switch to last template before final cover
