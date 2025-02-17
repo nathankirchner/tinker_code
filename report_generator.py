@@ -45,13 +45,16 @@ def read_text_file(filepath):
 
 def create_wordcloud(text_descriptions):
     """Generate wordcloud from text"""
+    # Remove <br/> tags before generating wordcloud
+    cleaned_text = [text.replace('<br/>', ' ') for text in text_descriptions]
+    
     wordcloud = WordCloud(
         width=800,
         height=400,
         background_color='white',
         stopwords=set(stopwords.words('english')),
         max_words=100
-    ).generate(' '.join(text_descriptions))
+    ).generate(' '.join(cleaned_text))
     
     img_buf = io.BytesIO()
     plt.figure(figsize=(10, 5))
@@ -93,8 +96,18 @@ def create_report():
     # Content
     story = []
     
+    # Cover page
+    cover_image_path = BASE_DIR / "20250217 GWA Reviewer Report Cover.png"
+    if cover_image_path.exists():
+        # Create cover image with specific size for first page
+        cover_img_first = Image(str(cover_image_path))
+        cover_img_first.drawHeight = 9*inch  # Adjust these values as needed
+        cover_img_first.drawWidth = 7*inch   # Adjust these values as needed
+        story.append(cover_img_first)
+        story.append(PageBreak())
+    
     # First page
-    story.append(Paragraph("Image Analysis Report // Kirchner", title_style))
+    story.append(Paragraph("Image Analysis Report // GWA Reviewer AI", title_style))
     story.append(Paragraph(read_text_file(BASE_DIR / "report preamble.txt"), normal_style))
     story.append(Spacer(1, 20))
     story.append(Paragraph("Executive Summary", heading_style))
@@ -149,6 +162,14 @@ def create_report():
     # Final page
     story.append(Paragraph("Conclusion", heading_style))
     story.append(Paragraph(read_text_file(BASE_DIR / "report conclusion.txt"), normal_style))
+
+    # Final cover page
+    if cover_image_path.exists():
+        # Create a new image instance with specific size for last page
+        cover_img_last = Image(str(cover_image_path))
+        cover_img_last.drawHeight = 9*inch  # Adjust these values as needed
+        cover_img_last.drawWidth = 7*inch   # Adjust these values as needed
+        story.append(cover_img_last)
 
     # Generate PDF
     doc.build(story)
