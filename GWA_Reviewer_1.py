@@ -71,8 +71,7 @@ model = YOLO('yolov8n.pt')  # Load YOLOv8 nano model
 # Get API key from environment variable or user input
 api_key = os.getenv('OPENAI_API_KEY')
 if not api_key:
-    # api_key = input("Please enter your OpenAI API key: ")
-    api_key = "sk-proj-0Jxtb5T7SSAQzaMsHqLjNIOJSlRhVm05NCwU76fPvY6xQ1c_R0UCkI5MCVJQmGUSMTЗSz2EkQfТЗB1bkFJuUS2ZcUbVоKNabYZdbЗTRЗG6RJ4QgkEbbzkUqIrqг1BnFFj7TX0V1aBIPI0tcf5CxDAed_UEgA"
+    api_key = input("Please enter your OpenAI API key: ")
 
 # Try to find specific image directory first, fall back to user selection if not found
 default_image_dir = "/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/20250214 Raw Data IMS"
