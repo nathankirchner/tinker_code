@@ -4,7 +4,8 @@ from pathlib import Path
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak, Image, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak, Image, Spacer, Frame
+from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate, NextPageTemplate
 from reportlab.lib.units import inch
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
@@ -47,7 +48,9 @@ def create_wordcloud(text_descriptions):
     """Generate wordcloud from text"""
     # Remove <br/> tags before generating wordcloud
     cleaned_text = [text.replace('<br/>', ' ') for text in text_descriptions]
-    
+    #cleaned_text = [text.replace('image', ' ') for text in text_descriptions]
+
+
     wordcloud = WordCloud(
         width=800,
         height=400,
@@ -64,10 +67,77 @@ def create_wordcloud(text_descriptions):
     plt.close()
     return img_buf
 
+class ReportTemplate(BaseDocTemplate):
+    def __init__(self, filename, **kw):
+        super().__init__(filename, **kw)
+        # Normal content frame
+        frame = Frame(
+            self.leftMargin,
+            self.bottomMargin + 0.75*inch,  # Make room for footer
+            self.width,
+            self.height - 0.75*inch,
+            id='normal'
+        )
+        # Footer frame
+        footer_frame = Frame(
+            self.leftMargin,
+            self.bottomMargin,
+            self.width,
+            0.75*inch,
+            id='footer'
+        )
+        
+        # First page template (no footer)
+        first_template = PageTemplate(
+            id='First',
+            frames=frame,
+            onPage=self.on_first_page
+        )
+        
+        # Last page template (no footer)
+        last_template = PageTemplate(
+            id='Last',
+            frames=frame,
+            onPage=self.on_last_page
+        )
+        
+        # Template for other pages (with footer)
+        content_template = PageTemplate(
+            id='Later',
+            frames=frame,  # Only use main frame
+            onPage=self.on_later_pages
+        )
+        
+        self.addPageTemplates([first_template, content_template, last_template])
+    
+    def on_first_page(self, canvas, doc):
+        pass
+    
+    def on_last_page(self, canvas, doc):
+        pass
+    
+    def on_later_pages(self, canvas, doc):
+        # Add logo to footer
+        logo_path = Path("/Users/nathankirchner/Workstuff/Projects/GWA_Reviewer/OUTPUT/IM_TEXT_DESCRIPTION/20250214 GWA Logo LONG WHITE LIGHT.png")
+        if logo_path.exists():
+            # Calculate position for center of page
+            page_width = A4[0]
+            logo_width = 2.5*inch  # Increased width for longer logo
+            logo_height = 0.5*inch  # Keep same height
+            x_position = (page_width - logo_width) / 2
+            
+            canvas.drawImage(
+                str(logo_path),
+                x_position,
+                0.25*inch,  # Position from bottom
+                width=logo_width,
+                height=logo_height
+            )
+
 def create_report():
     # Setup document
     output_file = BASE_DIR / f"Report_{datetime.now().strftime('%Y%m%d')}.pdf"
-    doc = SimpleDocTemplate(
+    doc = ReportTemplate(
         str(output_file),
         pagesize=A4,
         topMargin=inch,
@@ -99,15 +169,15 @@ def create_report():
     # Cover page
     cover_image_path = BASE_DIR / "20250217 GWA Reviewer Report Cover.png"
     if cover_image_path.exists():
-        # Create cover image with specific size for first page
+        story.append(NextPageTemplate('Later'))  # Switch to template with footer after first page
         cover_img_first = Image(str(cover_image_path))
-        cover_img_first.drawHeight = 9*inch  # Adjust these values as needed
-        cover_img_first.drawWidth = 7*inch   # Adjust these values as needed
+        cover_img_first.drawHeight = 8*inch  # Reduced from 9 to 8 inches
+        cover_img_first.drawWidth = 6*inch   # Reduced from 7 to 6 inches
         story.append(cover_img_first)
         story.append(PageBreak())
     
     # First page
-    story.append(Paragraph("Image Analysis Report // GWA Reviewer AI", title_style))
+    story.append(Paragraph("Image Analysis Report <br/><br/> GWA Reviewer AI", title_style))
     story.append(Paragraph(read_text_file(BASE_DIR / "report preamble.txt"), normal_style))
     story.append(Spacer(1, 20))
     story.append(Paragraph("Executive Summary", heading_style))
@@ -144,7 +214,7 @@ def create_report():
 
     # Word cloud and insights
     if text_descriptions:
-        story.append(Paragraph("Analysis Insights", heading_style))
+        story.append(Paragraph("Analysis Wordcloud", heading_style))
         
         wordcloud_buf = create_wordcloud(text_descriptions)
         wordcloud_img = Image(wordcloud_buf)
@@ -163,17 +233,30 @@ def create_report():
     story.append(Paragraph("Conclusion", heading_style))
     story.append(Paragraph(read_text_file(BASE_DIR / "report conclusion.txt"), normal_style))
 
-    # Final cover page
-    if cover_image_path.exists():
-        # Create a new image instance with specific size for last page
-        cover_img_last = Image(str(cover_image_path))
-        cover_img_last.drawHeight = 9*inch  # Adjust these values as needed
-        cover_img_last.drawWidth = 7*inch   # Adjust these values as needed
-        story.append(cover_img_last)
+    # Before final cover page
+    story.append(NextPageTemplate('Last'))  # Switch to last template before final cover
+    
+    # # Final cover page
+    # if cover_image_path.exists():
+    #     cover_img_last = Image(str(cover_image_path))
+    #     cover_img_last.drawHeight = 8*inch  # Reduced from 9 to 8 inches
+    #     cover_img_last.drawWidth = 6*inch   # Reduced from 7 to 6 inches
+    #     story.append(cover_img_last)
 
     # Generate PDF
     doc.build(story)
     print(f"Report generated successfully: {output_file}")
+    
+    # Open the PDF
+    import platform
+    import subprocess
+    
+    if platform.system() == 'Darwin':       # macOS
+        subprocess.run(['open', output_file])
+    elif platform.system() == 'Windows':     # Windows
+        subprocess.run(['start', output_file], shell=True)
+    elif platform.system() == 'Linux':       # Linux
+        subprocess.run(['xdg-open', output_file])
 
 if __name__ == "__main__":
     create_report()
