@@ -46,16 +46,18 @@ def read_text_file(filepath):
 
 def create_wordcloud(text_descriptions):
     """Generate wordcloud from text"""
-    # Remove <br/> tags before generating wordcloud
-    cleaned_text = [text.replace('<br/>', ' ') for text in text_descriptions]
-    #cleaned_text = [text.replace('image', ' ') for text in text_descriptions]
-
-
+    # Remove <br/> tags and 'image' word before generating wordcloud
+    cleaned_text = [text.replace('<br/>', ' ').replace('image', '').replace('Image', '') for text in text_descriptions]
+    
+    # Add 'image' to stopwords
+    custom_stopwords = set(stopwords.words('english'))
+    custom_stopwords.update(['image', 'Image', 'camera', 'Camera'])
+    
     wordcloud = WordCloud(
         width=800,
         height=400,
         background_color='white',
-        stopwords=set(stopwords.words('english')),
+        stopwords=custom_stopwords,
         max_words=100
     ).generate(' '.join(cleaned_text))
     
