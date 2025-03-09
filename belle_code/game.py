@@ -156,6 +156,16 @@ def main():
     # Define bowl rectangle for collision detection
     bowl_rect = pygame.Rect(BOWL_X, BOWL_Y, BOWL_WIDTH, BOWL_HEIGHT)
 
+    # Create sunset gradient background
+    background = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+    for y in range(WINDOW_HEIGHT):
+        # Calculate color based on y position
+        r = min(255, int(255 * (1 - y/WINDOW_HEIGHT) + 100))  # More red at top
+        g = min(255, int(128 * (1 - y/WINDOW_HEIGHT) + 50))   # Some green
+        b = min(255, int(200 * (y/WINDOW_HEIGHT)))            # More blue at bottom
+        color = (r, g, b)
+        pygame.draw.line(background, color, (0, y), (WINDOW_WIDTH, y))
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -215,6 +225,9 @@ def main():
 
         # Draw everything
         screen.fill(BLACK)
+        # Draw background first
+        screen.blit(background, (0, 0))
+        
         # Draw pugicorn (flipped based on direction)
         if player.facing == 'left':
             flipped_pugicorn = pygame.transform.flip(pugicorn, True, False)

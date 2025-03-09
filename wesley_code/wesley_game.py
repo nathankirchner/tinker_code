@@ -152,12 +152,68 @@ class InputBox:
         screen.blit(txt_surface, (self.rect.x+5, self.rect.y+5))
         pygame.draw.rect(screen, INPUT_BOX_COLOR, self.rect, 2)
 
+# Add after the Mountain class
+class Creeper:
+    def __init__(self, x):
+        self.width = 30
+        self.height = 30
+        self.x = x
+        self.y = WINDOW_HEIGHT - 60  # Same level as ground
+        self.color = (50, 168, 82)  # Creeper green
+        self.face_color = (0, 0, 0)  # Black for face
+        self.collected = False
+        self.direction = 1  # 1 for right, -1 for left
+        self.movement_range = 100  # How far it moves side to side
+        self.start_x = x  # Remember starting position
+        # Add jumping properties
+        self.velocity_y = 0
+        self.jumping = False
+
+    def move(self, speed):
+        self.x += self.direction * 3  # Move 3 pixels each frame
+        
+        # Change direction when reaching movement limits
+        if self.x > self.start_x + self.movement_range:
+            self.direction = -1
+        elif self.x < self.start_x - self.movement_range:
+            self.direction = 1
+
+        # Apply gravity
+        self.velocity_y += 0.8
+        self.y += self.velocity_y
+
+        # Ground collision
+        if self.y > WINDOW_HEIGHT - 60:
+            self.y = WINDOW_HEIGHT - 60
+            self.jumping = False
+            self.velocity_y = 0
+
+    def jump(self):
+        if not self.jumping:
+            self.velocity_y = -15
+            self.jumping = True
+
+    def draw(self, screen):
+        if not self.collected:
+            # Draw body
+            pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+            
+            # Draw face (classic creeper face)
+            # Eyes
+            pygame.draw.rect(screen, self.face_color, (self.x + 5, self.y + 8, 6, 6))
+            pygame.draw.rect(screen, self.face_color, (self.x + 19, self.y + 8, 6, 6))
+            
+            # Mouth
+            pygame.draw.rect(screen, self.face_color, (self.x + 9, self.y + 14, 12, 8))
+            pygame.draw.rect(screen, self.face_color, (self.x + 13, self.y + 18, 4, 4))
+
 # Game setup
 player = Player()
 hurdles = [Hurdle(WINDOW_WIDTH + i * 300) for i in range(3)]
 clock = pygame.time.Clock()
 game_speed = 5
 score = 0
+creepers_squashed = 0  # New counter for creepers
 
 # Add mountains to game setup
 mountains = [
@@ -166,6 +222,9 @@ mountains = [
     Mountain(400, 180, MOUNTAIN_COLORS[2]),
     Mountain(600, 220, MOUNTAIN_COLORS[0])
 ]
+
+# Add after game setup section
+creepers = [Creeper(300 + i * 400) for i in range(3)]  # Spawn 3 creepers at fixed positions
 
 # Add this function near the top of the file after imports
 def update_player_score(player_name, new_score):
@@ -192,6 +251,28 @@ def update_player_score(player_name, new_score):
         for name, score in scores.items():
             date_str = datetime.now().strftime('%Y-%m-%d %H:%M')
             f.write(f'{date_str} - Player: {name} - Score: {score}\n')
+
+# Add after game setup, before the main game loop
+def show_countdown():
+    font = pygame.font.Font(None, 74)
+    countdown_numbers = ["3", "2", "1", "GO!"]
+    
+    for number in countdown_numbers:
+        screen.fill(SKY_COLOR)
+        # Draw mountains
+        for mountain in mountains:
+            mountain.draw(screen)
+        # Draw ground
+        pygame.draw.rect(screen, (34, 139, 34), (0, WINDOW_HEIGHT - 30, WINDOW_WIDTH, 30))
+        
+        text = font.render(number, True, BLACK)
+        text_rect = text.get_rect(center=(WINDOW_WIDTH/2, WINDOW_HEIGHT/2))
+        screen.blit(text, text_rect)
+        pygame.display.flip()
+        pygame.time.delay(1000)  # Wait 1 second between numbers
+
+# Show countdown before game starts
+show_countdown()
 
 # Game loop
 running = True
@@ -229,15 +310,25 @@ while running:
             player.lives -= 1
             hurdle.x = WINDOW_WIDTH
             
-            # Flash red and orange
-            for _ in range(6):  # Flash 6 times
-                screen.fill((255, 0, 0))  # Red
+            # Flash red and orange in an expanding circle pattern
+            for radius in range(0, 200, 40):  # Explosion grows in size
+                # Red flash
+                screen.fill(SKY_COLOR)
+                pygame.draw.circle(screen, (255, 0, 0), 
+                                 (int(player.x + player.width/2), 
+                                  int(player.y + player.height/2)), 
+                                 radius)
                 pygame.display.flip()
-                pygame.time.delay(100)  # Wait 0.1 seconds
+                pygame.time.delay(50)
                 
-                screen.fill((255, 140, 0))  # Orange
+                # Orange flash
+                screen.fill(SKY_COLOR)
+                pygame.draw.circle(screen, (255, 140, 0), 
+                                 (int(player.x + player.width/2), 
+                                  int(player.y + player.height/2)), 
+                                 radius + 20)  # Slightly larger orange circle
                 pygame.display.flip()
-                pygame.time.delay(100)  # Wait 0.1 seconds
+                pygame.time.delay(50)
             
             if player.lives <= 0:
                 # Game Over screen and name input
@@ -279,7 +370,48 @@ while running:
                     pygame.display.flip()
                 
                 pygame.time.delay(1000)  # Short delay after name entry
-                running = False
+                
+                # Reset game state instead of quitting
+                player.lives = 3
+                score = 0
+                creepers_squashed = 0
+                player.x = 100
+                player.y = WINDOW_HEIGHT - 60
+                player.velocity_y = 0
+                player.jumping = False
+                
+                # Reset hurdles
+                hurdles = [Hurdle(WINDOW_WIDTH + i * 300) for i in range(3)]
+                
+                # Reset creepers
+                creepers = [Creeper(300 + i * 400) for i in range(3)]
+                
+                # Show countdown before restarting
+                show_countdown()
+                
+                continue  # Skip to next iteration of game loop
+
+    # Update and check creeper collisions
+    for creeper in creepers:
+        creeper.move(game_speed)
+        
+        # Make creepers jump over hurdles
+        for hurdle in hurdles:
+            # Check if hurdle is close and creeper is on the ground
+            if (not creeper.jumping and 
+                abs(creeper.x - hurdle.x) < 100 and 
+                creeper.x < hurdle.x):
+                creeper.jump()
+        
+        # Check if player lands on top of creeper
+        if not creeper.collected:
+            if (player.x < creeper.x + creeper.width and 
+                player.x + player.width > creeper.x and 
+                player.y + player.height >= creeper.y and 
+                player.y + player.height <= creeper.y + 10):
+                score += 10
+                creepers_squashed += 1
+                creeper.collected = True
 
     # Draw everything
     screen.fill(SKY_COLOR)  # Fill with sky color
@@ -296,12 +428,18 @@ while running:
     for hurdle in hurdles:
         hurdle.draw(screen)
 
-    # Draw score and lives
+    # Draw creepers
+    for creeper in creepers:
+        creeper.draw(screen)
+
+    # Draw score, lives, and creepers squashed
     font = pygame.font.Font(None, 36)
     score_text = font.render(f'Score: {score}', True, BLACK)
     lives_text = font.render(f'Lives: {player.lives}', True, BLACK)
+    creeper_text = font.render(f'Creepers Squashed: {creepers_squashed}', True, BLACK)
     screen.blit(score_text, (10, 10))
     screen.blit(lives_text, (10, 40))
+    screen.blit(creeper_text, (10, 70))  # Display below lives
 
     pygame.display.flip()
     clock.tick(60)
