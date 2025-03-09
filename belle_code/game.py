@@ -40,7 +40,7 @@ BOWL_Y = WINDOW_HEIGHT - 60
 
 # Load glitter image
 glitter_img = pygame.image.load(os.path.join(ASSETS_DIR, "glitter.jpg"))
-glitter_img = pygame.transform.scale(glitter_img, (20, 20))  # Adjust size as needed
+glitter_img = pygame.transform.scale(glitter_img, (100, 20))  # Adjust size as needed
 
 class Pugicorn:
     def __init__(self):
@@ -117,10 +117,18 @@ class Corgi:
         self.surface = corgi
         self.rect = self.surface.get_rect(center=(self.x, self.y))
         self.has_stolen = False
+        self.is_retreating = False
 
     def move(self):
+        if self.is_retreating:
+            # Reverse direction when retreating
+            self.speed_x = -self.speed_x
+            self.is_retreating = False  # Reset flag after changing direction
         self.x += self.speed_x
         self.rect.center = (self.x, self.y)
+
+    def retreat(self):
+        self.is_retreating = True
 
 class Glitter:
     def __init__(self, x, y, dx, dy):
@@ -201,7 +209,7 @@ def main():
                 glitters.remove(glitter)
             for corgi in corgis[:]:
                 if glitter.rect.colliderect(corgi.rect):
-                    corgis.remove(corgi)
+                    corgi.retreat()  # Make corgi retreat instead of removing it
                     glitters.remove(glitter)
                     score += 2  # Bonus points for hitting corgis
                     break
