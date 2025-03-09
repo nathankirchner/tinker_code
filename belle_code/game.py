@@ -19,28 +19,27 @@ BLACK = (0, 0, 0)
 GAME_DIR = os.path.dirname(__file__)
 ASSETS_DIR = os.path.join(GAME_DIR, "assets")
 
-pugicorn = pygame.image.load(os.path.join(ASSETS_DIR, "pugicorn.png"))
-pugicorn = pygame.transform.scale(pugicorn, (80, 80))
-
-# You'll need to download a corgi image and save it as corgi.png in assets folder
-corgi = pygame.image.load(os.path.join(ASSETS_DIR, "corgi.png"))
-corgi = pygame.transform.scale(corgi, (60, 60))
-
-# Create bone and bowl images or load them
-bone = pygame.Surface((20, 10))
-bone.fill(WHITE)
-bowl = pygame.Surface((100, 50))
-bowl.fill(WHITE)
-
 # Constants for bowl position
 BOWL_WIDTH = 100
 BOWL_HEIGHT = 50
 BOWL_X = (WINDOW_WIDTH - BOWL_WIDTH) // 2
 BOWL_Y = WINDOW_HEIGHT - 60
 
-# Load glitter image
+# Load images
+pugicorn = pygame.image.load(os.path.join(ASSETS_DIR, "pugicorn.png"))
+pugicorn = pygame.transform.scale(pugicorn, (80, 80))
+
+corgi = pygame.image.load(os.path.join(ASSETS_DIR, "corgi.png"))
+corgi = pygame.transform.scale(corgi, (60, 60))
+
+bone_img = pygame.image.load(os.path.join(ASSETS_DIR, "bone.png"))
+bone_img = pygame.transform.scale(bone_img, (40, 20))
+
+bowl_img = pygame.image.load(os.path.join(ASSETS_DIR, "dog_bowl.png"))
+bowl_img = pygame.transform.scale(bowl_img, (BOWL_WIDTH, BOWL_HEIGHT))
+
 glitter_img = pygame.image.load(os.path.join(ASSETS_DIR, "glitter.jpg"))
-glitter_img = pygame.transform.scale(glitter_img, (100, 20))  # Adjust size as needed
+glitter_img = pygame.transform.scale(glitter_img, (100, 20))
 
 class Pugicorn:
     def __init__(self):
@@ -95,7 +94,7 @@ class Bone:
         self.x = random.randint(0, WINDOW_WIDTH)
         self.y = random.randint(-100, 0)
         self.speed = 2
-        self.surface = bone  # Store the surface as an attribute
+        self.surface = bone_img  # Use the bone image instead of the white surface
         self.rect = self.surface.get_rect(center=(self.x, self.y))
 
     def move(self):
@@ -233,7 +232,7 @@ def main():
             screen.blit(glitter.surface, glitter.rect)
 
         # Draw score and bowl
-        pygame.draw.rect(screen, WHITE, bowl_rect)  # Bowl
+        screen.blit(bowl_img, bowl_rect)  # Use bowl image instead of drawing rectangle
         font = pygame.font.Font(None, 36)
         score_text = font.render(f'Score: {score} (Bowl: {bones_in_bowl})', True, WHITE)
         screen.blit(score_text, (10, 10))
