@@ -14,19 +14,22 @@ client = OpenAI(api_key='your-api-key-here')
 
 def extract_urls_from_rtf(file_path):
     """Extract URLs from RTF file"""
-    import striprtf.striprtf
-    
     try:
+        print(f"Opening file: {file_path}")
         with open(file_path, 'r', encoding='utf-8') as file:
             rtf_text = file.read()
-            # Convert RTF to plain text
-            plain_text = striprtf.striprtf.rtf_to_text(rtf_text)
+            print(f"File content length: {len(rtf_text)}")
             
-            # Use regex to find URLs
-            url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-            urls = re.findall(url_pattern, plain_text)
+            # Extract URLs from RTF hyperlink fields
+            url_pattern = r'\\field.*?HYPERLINK "(.*?)"'
+            urls = re.findall(url_pattern, rtf_text)
+            print(f"Found URLs: {urls}")
             
-            return urls
+            # Filter out any non-URLs and clean them
+            valid_urls = [url for url in urls if url.startswith('http')]
+            print(f"Valid URLs: {valid_urls}")
+            
+            return valid_urls
     except Exception as e:
         print(f"Error reading RTF file: {e}")
         return []
@@ -92,7 +95,13 @@ def main():
         return
     
     # Extract URLs
+    print(f"Selected file: {input_file}")
     urls = extract_urls_from_rtf(input_file)
+    print(f"Extracted URLs: {urls}")
+    
+    if not urls:
+        print("No URLs found in the file!")
+        return
     
     # Prepare CSV file
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
