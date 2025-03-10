@@ -38,7 +38,7 @@ class Player:
     def __init__(self):
         self.width = 30
         self.height = 30
-        self.x = 100
+        self.x = 150
         self.y = WINDOW_HEIGHT - 60
         self.velocity_y = 0
         self.jumping = False  
@@ -206,6 +206,70 @@ class Creeper:
             pygame.draw.rect(screen, self.face_color, (self.x + 9, self.y + 14, 12, 8))
             pygame.draw.rect(screen, self.face_color, (self.x + 13, self.y + 18, 4, 4))
 
+# Add this new class after the Creeper class
+class ZombieAlly:
+    def __init__(self, x, y):
+        self.width = 30
+        self.height = 30
+        self.x = x
+        self.y = y
+        self.speed = 4
+        self.body_color = (0, 150, 20)  # Zombie green
+        self.face_color = (70, 100, 0)  # Darker green for features
+        self.velocity_y = 0
+        self.jumping = False
+        self.target_creeper = None
+        self.spawn_time = pygame.time.get_ticks()  # Add spawn time
+        self.lifetime = 3000  # 3 seconds in milliseconds
+
+    def is_expired(self):
+        current_time = pygame.time.get_ticks()
+        return current_time - self.spawn_time >= self.lifetime
+
+    def move(self, creepers):
+        # Find nearest non-collected creeper
+        nearest_dist = float('inf')
+        for creeper in creepers:
+            if not creeper.collected:
+                dist = abs(self.x - creeper.x)
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    self.target_creeper = creeper
+
+        # Move towards target creeper
+        if self.target_creeper and not self.target_creeper.collected:
+            if self.x < self.target_creeper.x:
+                self.x += self.speed
+            elif self.x > self.target_creeper.x:
+                self.x -= self.speed
+
+        # Apply gravity
+        self.velocity_y += 0.8
+        self.y += self.velocity_y
+
+        # Ground collision
+        if self.y > WINDOW_HEIGHT - 60:
+            self.y = WINDOW_HEIGHT - 60
+            self.jumping = False
+            self.velocity_y = 0
+
+    def draw(self, screen):
+        # Calculate remaining time
+        remaining_time = (self.spawn_time + self.lifetime - pygame.time.get_ticks()) / 1000
+        
+        # Make zombie flash when about to expire (last second)
+        if remaining_time <= 1:
+            if pygame.time.get_ticks() % 200 < 100:  # Flash every 0.2 seconds
+                return
+        
+        # Draw body
+        pygame.draw.rect(screen, self.body_color, (self.x, self.y, self.width, self.height))
+        
+        # Draw zombie face
+        pygame.draw.rect(screen, self.face_color, (self.x + 5, self.y + 8, 6, 6))
+        pygame.draw.rect(screen, self.face_color, (self.x + 19, self.y + 8, 6, 6))
+        pygame.draw.rect(screen, self.face_color, (self.x + 9, self.y + 18, 12, 4))
+
 # Game setup
 player = Player()
 hurdles = [Hurdle(WINDOW_WIDTH + i * 300) for i in range(3)]
@@ -224,6 +288,14 @@ mountains = [
 
 # Add after game setup section
 creepers = [Creeper(300 + i * 400) for i in range(3)]  # Spawn 3 creepers at fixed positions
+
+# Add this line after the game setup section where other lists are defined
+zombie_allies = []
+
+# Add these variables after the other game setup variables
+MIN_CREEPERS = 3  # Minimum number of active creepers
+CREEPER_SPAWN_INTERVAL = 1000  # Spawn faster, every 1 second
+last_creeper_spawn_time = pygame.time.get_ticks()
 
 # Add this function near the top of the file after imports
 def update_player_score(player_name, new_score):
@@ -263,7 +335,7 @@ def show_countdown():
     lives_font = pygame.font.Font(None, 48)
     
     # Wait for space bar
-    waiting_for_start = True
+    waiting_for_start = False
     while waiting_for_start:
         screen.fill(SKY_COLOR)
         # Draw mountains
@@ -416,7 +488,7 @@ while running:
                 player.lives = 3
                 score = 0
                 creepers_squashed = 0
-                player.x = 100
+                player.x = 150
                 player.y = WINDOW_HEIGHT - 60
                 player.velocity_y = 0
                 player.jumping = False
@@ -427,18 +499,35 @@ while running:
                 # Reset creepers
                 creepers = [Creeper(300 + i * 400) for i in range(3)]
                 
+                # Reset zombie allies
+                zombie_allies.clear()
+                
                 # Show countdown before restarting
                 show_countdown()
                 
                 continue  # Skip to next iteration of game loop
 
     # Update and check creeper collisions
+    current_time = pygame.time.get_ticks()
+    
+    # Count active (non-collected) creepers
+    active_creepers = sum(1 for creeper in creepers if not creeper.collected)
+    
+    # Spawn new creepers if we're below minimum and enough time has passed
+    if active_creepers < MIN_CREEPERS and current_time - last_creeper_spawn_time > CREEPER_SPAWN_INTERVAL:
+        # Spawn at random position
+        new_x = random.randint(100, WINDOW_WIDTH - 100)
+        creepers.append(Creeper(new_x))
+        last_creeper_spawn_time = current_time
+
+    # Remove collected creepers after some time
+    creepers = [creeper for creeper in creepers if not creeper.collected and creeper.x > -50]
+
     for creeper in creepers:
         creeper.move(game_speed)
         
         # Make creepers jump over hurdles
         for hurdle in hurdles:
-            # Check if hurdle is close and creeper is on the ground
             if (not creeper.jumping and 
                 abs(creeper.x - hurdle.x) < 100 and 
                 creeper.x < hurdle.x):
@@ -453,9 +542,35 @@ while running:
                 score += 10
                 creepers_squashed += 1
                 creeper.collected = True
-                # Transform player into zombie
-                player.body_color = (0, 150, 20)  # Zombie green
-                player.face_color = (70, 100, 0)  # Darker green for features
+                # Create new zombie ally where the creeper was
+                zombie_allies.append(ZombieAlly(creeper.x, creeper.y))
+
+    # Update zombie allies
+    # Use a list to keep track of zombies to remove
+    zombies_to_remove = []
+    
+    for zombie in zombie_allies:
+        if zombie.is_expired():
+            zombies_to_remove.append(zombie)
+            continue
+            
+        zombie.move(creepers)
+        # Check if zombie caught any creepers
+        for creeper in creepers:
+            if not creeper.collected:
+                if (zombie.x < creeper.x + creeper.width and 
+                    zombie.x + zombie.width > creeper.x and 
+                    abs(zombie.y - creeper.y) < 20):
+                    score += 5  # Bonus points for zombie allies catching creepers
+                    creepers_squashed += 1
+                    creeper.collected = True
+                    # Create new zombie ally where the creeper was caught
+                    zombie_allies.append(ZombieAlly(creeper.x, creeper.y))
+    
+    # Remove expired zombies
+    for zombie in zombies_to_remove:
+        if zombie in zombie_allies:
+            zombie_allies.remove(zombie)
 
     # Draw everything
     screen.fill(SKY_COLOR)  # Fill with sky color
@@ -475,6 +590,10 @@ while running:
     # Draw creepers
     for creeper in creepers:
         creeper.draw(screen)
+
+    # Draw zombie allies
+    for zombie in zombie_allies:
+        zombie.draw(screen)
 
     # Draw score, lives, and creepers squashed
     font = pygame.font.Font(None, 36)

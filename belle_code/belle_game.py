@@ -20,10 +20,10 @@ GAME_DIR = os.path.dirname(__file__)
 ASSETS_DIR = os.path.join(GAME_DIR, "assets")
 
 # Constants for bowl position
-BOWL_WIDTH = 100
-BOWL_HEIGHT = 50
+BOWL_WIDTH = 200
+BOWL_HEIGHT = 100
 BOWL_X = (WINDOW_WIDTH - BOWL_WIDTH) // 2
-BOWL_Y = WINDOW_HEIGHT - 60
+BOWL_Y = WINDOW_HEIGHT - 120
 
 # Load images
 pugicorn = pygame.image.load(os.path.join(ASSETS_DIR, "pugicorn.png"))
@@ -38,7 +38,7 @@ bone_img = pygame.transform.scale(bone_img, (40, 20))
 bowl_img = pygame.image.load(os.path.join(ASSETS_DIR, "dog_bowl.png"))
 bowl_img = pygame.transform.scale(bowl_img, (BOWL_WIDTH, BOWL_HEIGHT))
 
-glitter_img = pygame.image.load(os.path.join(ASSETS_DIR, "glitter.jpg"))
+glitter_img = pygame.image.load(os.path.join(ASSETS_DIR, "glitter.png"))
 glitter_img = pygame.transform.scale(glitter_img, (100, 20))
 
 class Pugicorn:
@@ -81,12 +81,17 @@ class Pugicorn:
             # Calculate direction vector to nearest corgi
             dx = nearest_corgi.x - self.x
             dy = nearest_corgi.y - self.y
-            # Normalize the vector
-            length = (dx ** 2 + dy ** 2) ** 0.5
-            if length > 0:
+            # Add a minimum distance check to prevent zero vectors
+            if abs(dx) < 1 and abs(dy) < 1:
+                # If corgi is very close, shoot horizontally in the direction we're facing
+                dx = 1 if self.facing == 'right' else -1
+                dy = 0
+            else:
+                # Normalize the vector
+                length = (dx ** 2 + dy ** 2) ** 0.5
                 dx = dx / length
                 dy = dy / length
-                return Glitter(self.x, self.y, dx, dy)
+            return Glitter(self.x, self.y, dx, dy)
         return None
 
 class Bone:
@@ -104,25 +109,26 @@ class Bone:
 class Corgi:
     def __init__(self):
         self.speed = 3
-        # Randomly choose left or right side
         self.side = random.choice(['left', 'right'])
         if self.side == 'left':
-            self.x = -60  # Start off-screen on the left
+            self.x = -60
             self.speed_x = self.speed
         else:
-            self.x = WINDOW_WIDTH + 60  # Start off-screen on the right
+            self.x = WINDOW_WIDTH + 60
             self.speed_x = -self.speed
-        self.y = random.randint(WINDOW_HEIGHT - 150, WINDOW_HEIGHT - 50)  # Near the bowl height
+        self.y = random.randint(WINDOW_HEIGHT - 150, WINDOW_HEIGHT - 50)
         self.surface = corgi
         self.rect = self.surface.get_rect(center=(self.x, self.y))
         self.has_stolen = False
         self.is_retreating = False
+        self.hit_by_glitter = False  # Add new flag to track if hit by glitter
 
     def move(self):
         if self.is_retreating:
             # Reverse direction when retreating
             self.speed_x = -self.speed_x
-            self.is_retreating = False  # Reset flag after changing direction
+            self.is_retreating = False
+            self.hit_by_glitter = True  # Mark as hit when retreating
         self.x += self.speed_x
         self.rect.center = (self.x, self.y)
 
@@ -133,16 +139,19 @@ class Glitter:
     def __init__(self, x, y, dx, dy):
         self.x = x
         self.y = y
-        self.speed = 10
+        self.speed = 5
         self.dx = dx * self.speed  # Direction vector X
         self.dy = dy * self.speed  # Direction vector Y
         self.surface = glitter_img
         self.rect = self.surface.get_rect(center=(self.x, self.y))
+        self.hit_time = None  # Add timer for hit animation
+        self.hit_duration = 500  # Changed from 1000 to 500 milliseconds (half a second)
 
     def move(self):
-        self.x += self.dx
-        self.y += self.dy
-        self.rect.center = (self.x, self.y)
+        if not self.hit_time:  # Only move if not in hit animation
+            self.x += self.dx
+            self.y += self.dy
+            self.rect.center = (self.x, self.y)
 
 def main():
     clock = pygame.time.Clock()
@@ -166,6 +175,8 @@ def main():
         color = (r, g, b)
         pygame.draw.line(background, color, (0, y), (WINDOW_WIDTH, y))
 
+    MAX_CORGIS = 3  # Add this constant
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -184,8 +195,8 @@ def main():
         if random.random() < 0.02:
             bones.append(Bone())
             
-        # Generate new corgis
-        if random.random() < 0.01:
+        # Generate new corgis only if there are fewer than MAX_CORGIS
+        if random.random() < 0.01 and len(corgis) < MAX_CORGIS:
             corgis.append(Corgi())
 
         # Update bones
@@ -203,25 +214,32 @@ def main():
             corgi.move()
             # Check if corgi reaches the bowl and hasn't stolen yet
             if corgi.rect.colliderect(bowl_rect) and not corgi.has_stolen and bones_in_bowl > 0:
-                bones_in_bowl -= 1  # Steal a bone
+                bones_in_bowl -= 1
                 corgi.has_stolen = True
-            # Remove corgi if it goes off screen
-            if (corgi.side == 'left' and corgi.x > WINDOW_WIDTH + 60) or \
-               (corgi.side == 'right' and corgi.x < -60):
+            # Remove corgi if it goes off screen after being hit by glitter
+            if corgi.hit_by_glitter and (corgi.x < -60 or corgi.x > WINDOW_WIDTH + 60):
+                corgis.remove(corgi)
+            # Remove normal corgis only if they haven't been hit by glitter
+            elif not corgi.hit_by_glitter and ((corgi.side == 'left' and corgi.x > WINDOW_WIDTH + 60) or 
+                                             (corgi.side == 'right' and corgi.x < -60)):
                 corgis.remove(corgi)
 
         # Update glitters
+        current_time = pygame.time.get_ticks()
         for glitter in glitters[:]:
             glitter.move()
             # Remove glitter if it goes off screen
             if glitter.y < 0 or glitter.x < 0 or glitter.x > WINDOW_WIDTH:
                 glitters.remove(glitter)
             for corgi in corgis[:]:
-                if glitter.rect.colliderect(corgi.rect):
-                    corgi.retreat()  # Make corgi retreat instead of removing it
-                    glitters.remove(glitter)
+                if glitter.rect.colliderect(corgi.rect) and not glitter.hit_time:
+                    corgi.retreat()  # Make corgi retreat
+                    glitter.hit_time = current_time  # Start hit animation timer
                     score += 2  # Bonus points for hitting corgis
                     break
+            # Remove glitter after hit animation duration
+            if glitter.hit_time and current_time - glitter.hit_time >= glitter.hit_duration:
+                glitters.remove(glitter)
 
         # Draw everything
         screen.fill(BLACK)
