@@ -41,8 +41,6 @@ class Player:
         self.y = WINDOW_HEIGHT - 60
         self.velocity_y = 0
         self.jumping = False  
-         
-          
         self.speed = 10
         self.lives = 3
         # Add zombie colors
@@ -330,6 +328,10 @@ while running:
                 pygame.display.flip()
                 pygame.time.delay(50)
             
+            # Show countdown after explosion if player still has lives
+            if player.lives > 0:
+                show_countdown()
+            
             if player.lives <= 0:
                 # Game Over screen and name input
                 input_box = InputBox(WINDOW_WIDTH/2 - 100, WINDOW_HEIGHT/2 + 50, 200, 32)
@@ -412,6 +414,9 @@ while running:
                 score += 10
                 creepers_squashed += 1
                 creeper.collected = True
+                # Transform player into zombie
+                player.body_color = (0, 150, 20)  # Zombie green
+                player.face_color = (70, 100, 0)  # Darker green for features
 
     # Draw everything
     screen.fill(SKY_COLOR)  # Fill with sky color
