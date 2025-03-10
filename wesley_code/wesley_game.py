@@ -2,6 +2,7 @@ import pygame
 import random
 import os
 from datetime import datetime
+from pathlib import Path
 
 # Initialize Pygame
 pygame.init()
@@ -228,9 +229,12 @@ creepers = [Creeper(300 + i * 400) for i in range(3)]  # Spawn 3 creepers at fix
 def update_player_score(player_name, new_score):
     scores = {}
     
+    # Use Path to handle file paths
+    score_file = Path(__file__).parent / 'my_scores.txt'
+    
     # Read existing scores if file exists
-    if os.path.exists('my scores.txt'):
-        with open('my scores.txt', 'r') as f:
+    if score_file.exists():
+        with open(score_file, 'r') as f:
             for line in f:
                 if '- Player:' in line:
                     parts = line.split(' - Player: ')[1]
@@ -238,14 +242,14 @@ def update_player_score(player_name, new_score):
                     score = int(parts.split(' - Score: ')[1])
                     scores[name] = score
     
-    # Update score for player (add to existing score if player exists)
+    # Update score for player
     if player_name in scores:
         scores[player_name] += new_score
     else:
         scores[player_name] = new_score
     
     # Write all scores back to file
-    with open('my scores.txt', 'w') as f:
+    with open(score_file, 'w') as f:
         for name, score in scores.items():
             date_str = datetime.now().strftime('%Y-%m-%d %H:%M')
             f.write(f'{date_str} - Player: {name} - Score: {score}\n')
@@ -255,6 +259,34 @@ def show_countdown():
     font = pygame.font.Font(None, 74)
     countdown_numbers = ["3", "2", "1", "GO!"]
     
+    # Add lives font with smaller size
+    lives_font = pygame.font.Font(None, 48)
+    
+    # Wait for space bar
+    waiting_for_start = True
+    while waiting_for_start:
+        screen.fill(SKY_COLOR)
+        # Draw mountains
+        for mountain in mountains:
+            mountain.draw(screen)
+        # Draw ground
+        pygame.draw.rect(screen, (34, 139, 34), (0, WINDOW_HEIGHT - 30, WINDOW_WIDTH, 30))
+        
+        # Draw "Press SPACE to start" message
+        start_text = font.render("Press SPACE to start", True, BLACK)
+        start_rect = start_text.get_rect(center=(WINDOW_WIDTH/2, WINDOW_HEIGHT/2))
+        screen.blit(start_text, start_rect)
+        
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                waiting_for_start = False
+    
+    # Continue with countdown
     for number in countdown_numbers:
         screen.fill(SKY_COLOR)
         # Draw mountains
@@ -263,9 +295,16 @@ def show_countdown():
         # Draw ground
         pygame.draw.rect(screen, (34, 139, 34), (0, WINDOW_HEIGHT - 30, WINDOW_WIDTH, 30))
         
+        # Draw countdown number
         text = font.render(number, True, BLACK)
         text_rect = text.get_rect(center=(WINDOW_WIDTH/2, WINDOW_HEIGHT/2))
         screen.blit(text, text_rect)
+        
+        # Draw lives remaining
+        lives_text = lives_font.render(f'Lives Remaining: {player.lives}', True, BLACK)
+        lives_rect = lives_text.get_rect(center=(WINDOW_WIDTH/2, WINDOW_HEIGHT/2 + 60))
+        screen.blit(lives_text, lives_rect)
+        
         pygame.display.flip()
         pygame.time.delay(1000)  # Wait 1 second between numbers
 
