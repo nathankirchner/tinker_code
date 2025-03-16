@@ -1,9 +1,12 @@
+# THIS IS THE TINKER CODE FILE
 import warnings
 warnings.filterwarnings("ignore", category=Warning)  # Add this to handle SSL warnings
 
 # Configuration flags
-USE_GOOGLE_SEARCH = True  # Set to True to enable Google Search
-USE_OPENAI = False        # Set to False to use dummy responses instead of OpenAI
+USE_OPENAI = True        # Set to False to use dummy responses instead of OpenAI
+SKIP_PROPOSITIONS = True  # Set to True to skip generating propositions
+SKIP_STAKEHOLDER_MAP = True  # Set to True to skip creating stakeholder map
+SKIP_CATEGORIZATION = False  # Set to True to skip categorizing leads
 
 import os
 from typing import List, Dict, Any
@@ -17,6 +20,8 @@ import pandas as pd
 import sys
 from dotenv import load_dotenv, set_key
 from pathlib import Path
+from tqdm import tqdm
+import time  # Add this import at the top
 
 def get_dummy_response(prompt: str) -> str:
     """Generate dummy responses when OpenAI is disabled"""
@@ -27,7 +32,7 @@ def get_dummy_response(prompt: str) -> str:
     else:
         return "Sample proposition: Let's collaborate on a pilot project to implement your technology."
 
-def setup_api_keys(skip_google_search=True):
+def setup_api_keys():
     """Setup API keys with user input if not found in environment"""
     # Load existing .env file or create if doesn't exist
     env_path = Path(get_script_dir()) / '.env'
@@ -41,50 +46,18 @@ def setup_api_keys(skip_google_search=True):
         set_key(env_path, 'OPENAI_API_KEY', api_key)
         os.environ['OPENAI_API_KEY'] = api_key
         print("✅ OpenAI API key saved")
-    
-    # Check for Google API keys if Google Search is enabled
-    if USE_GOOGLE_SEARCH and not skip_google_search:
-        need_google_setup = not os.getenv('GOOGLE_API_KEY') or not os.getenv('GOOGLE_CSE_ID')
-        if need_google_setup:
-            print("\n⚠️ Google Search API configuration needed")
-            api_key = input("Please enter your Google API key (or press Enter to skip Google search): ").strip()
-            if api_key:
-                set_key(env_path, 'GOOGLE_API_KEY', api_key)
-                os.environ['GOOGLE_API_KEY'] = api_key
-                
-                cse_id = input("Please enter your Google Custom Search Engine ID: ").strip()
-                if cse_id:
-                    set_key(env_path, 'GOOGLE_CSE_ID', cse_id)
-                    os.environ['GOOGLE_CSE_ID'] = cse_id
-                    print("✅ Google Search configuration saved")
-                    return True
-            print("ℹ️ Skipping Google search setup")
-            return False
-        return True
-    return False
 
 # Initialize API clients after setting up keys
-def initialize_clients(use_google=True):
+def initialize_clients():
     clients = {}
     
     if USE_OPENAI:
-        clients["llm"] = ChatOpenAI(model="gpt-4")
+        clients["llm"] = ChatOpenAI(model="gpt-4o-mini")
     else:
         print("ℹ️ Using dummy responses instead of OpenAI")
         clients["llm"] = type('DummyLLM', (), {
             'invoke': lambda self, messages: type('DummyResponse', (), {'content': get_dummy_response(messages[-1].content)})()
         })()
-    
-    if USE_GOOGLE_SEARCH and use_google:
-        try:
-            from langchain_google_community import GoogleSearchAPIWrapper  # Updated import
-            clients["google_search"] = GoogleSearchAPIWrapper()
-            print("✅ Google Search API initialized")
-        except Exception as e:
-            print(f"⚠️ Error setting up Google Search: {e}")
-            print("ℹ️ Falling back to sample data")
-            clients["google_search"] = None
-            use_google = False
     
     return clients
 
@@ -93,127 +66,174 @@ def get_script_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 class AECNetworkAgent:
-    def __init__(self, clients, skip_google_search=True):
+    def __init__(self, clients):
         self.categories = {
             "ConTech Startup": [],
             "ConTech Investors": [],
             "ConTech Adopter": [],
-            "ConTech Innovator": []
         }
         self.connections = []
-        self.skip_google_search = skip_google_search
         self.llm = clients["llm"]
-        self.google_search = clients.get("google_search")
-        self.output_dir = get_script_dir()  # Add output directory
+        self.output_dir = get_script_dir()
         
     def search_and_collect_data(self) -> Dict[str, List[Dict]]:
-        # Search query
-        query = "AEC Construction Technology startups robotics AI investors users adopter innovators"
+        print("\n🔍 OpenAI Search Results:")
+        print("==================================================")
         
-        # Initialize results dictionary
-        results = {}
-        max_results = 20  # Limit total results
+        try:
+            openai_prompt = """Please provide a list of 100 real companies in total. Find approximately 33 companies for each category:
+            1) startups, innovators, creators, technology suppliers, early stage companies, 
+            2) corporate venture capital, private equity, venture capitalists, investors, 
+            3) adopters, and 
+            in the AEC (Architecture, Engineering, Construction) technology space.
+
+            Use the following urlsand to complete this search task.
+            - https://contechroundup.substack.com/
+            - https://builtworlds.com/
+            - https://builtworlds.com/insights/2024-builtworlds-top-50-venture-investors/
+            - https://builtworlds.com/insights/2024-top-50-venture-investments-deals/
+            - https://builtworlds.com/insights/2025-building-tech-top-50-list/
+            - https://builtworlds.com/insights/2024-adoption-leaders-50-list/
+            - https://builtworlds.com/insights/2024-global-innovators-list-new/
+            - https://builtworlds.com/insights/2025-preconstruction-tech-top-50-list/
+            - https://www.constructiondive.com/
+            - https://www.constructiondive.com/news/contech-startups-to-watch-2024/632886/
+            - https://brickmortar.vc/portfolio 
+            
+            For each, include:
+            Company: [name]
+            Description: [description]
+            URL: [url]
+            
+            Focus on companies involved in robotics, AI, and construction technology.
+            Format each entry exactly as shown above, with each field on a new line."""
+            
+            print("Generating company list, this will take OpenAi a minute to complete, be patient... ")
+            
+            # Make the API call
+            response = self.llm.invoke([
+                SystemMessage(content="You are a construction technology industry expert with extensive knowledge of the AEC sector."),
+                HumanMessage(content=openai_prompt)
+            ])
+            
+            # Parse the response into structured data
+            results = {"openai": []}
+            company_data = self._parse_openai_response(response.content)
+            if company_data:
+                results["openai"].extend(company_data)
         
-        # Only perform Google search if not skipped and client is available
-        if not self.skip_google_search and self.google_search is not None:
-            try:
-                google_results = self.google_search.run(query)
-                # Limit Google results
-                results["google"] = google_results[:max_results]
-                print(f"🔍 Including {len(results['google'])} Google search results...")
-            except Exception as e:
-                print(f"\n⚠️ Error during Google search: {e}")
-                while True:
-                    response = input("\nWould you like to continue with sample data instead? (yes/no): ").lower().strip()
-                    if response in ['yes', 'y']:
-                        print("\nℹ️ Continuing with sample data...")
-                        self.skip_google_search = True
-                        break
-                    elif response in ['no', 'n']:
-                        print("\n❌ Exiting program...")
-                        sys.exit(1)
-                    else:
-                        print("\n⚠️ Please answer 'yes' or 'no'")
+        except Exception as e:
+            print("\n❌ Error generating companies:", str(e))
+            return {"openai": []}
         
-        # Use sample data if Google search is skipped or failed
-        if self.skip_google_search or not results:
-            print("🔍 Using sample AEC technology companies and stakeholders...")
-            results["manual"] = [
-                {
-                    "name": "BuildBot Robotics",
-                    "description": "A startup developing autonomous robots for construction site inspection and monitoring",
-                    "url": "https://example.com/buildbot"
-                },
-                {
-                    "name": "AEC Ventures Capital",
-                    "description": "Leading venture capital firm specializing in construction technology investments",
-                    "url": "https://example.com/aecvc"
-                },
-                {
-                    "name": "SmartSite Solutions",
-                    "description": "AI-powered construction management platform for large scale projects",
-                    "url": "https://example.com/smartsite"
-                },
-                {
-                    "name": "BuildTech Partners",
-                    "description": "Construction industry accelerator and innovation hub",
-                    "url": "https://example.com/buildtech"
-                },
-                {
-                    "name": "ConstructCorp Global",
-                    "description": "Major construction company actively adopting and implementing new technologies",
-                    "url": "https://example.com/constructcorp"
-                },
-                {
-                    "name": "AI Build Analytics",
-                    "description": "Startup providing AI-driven analytics for construction project optimization",
-                    "url": "https://example.com/aibuild"
-                },
-                {
-                    "name": "TechBuild Innovations",
-                    "description": "Research and development firm creating new construction automation technologies",
-                    "url": "https://example.com/techbuild"
-                },
-                {
-                    "name": "Construction Future Fund",
-                    "description": "Investment fund focused on construction technology and innovation",
-                    "url": "https://example.com/cff"
-                }
-            ]
-            print(f"📊 Using {len(results['manual'])} sample companies...")
+        # Display results summary
+        print("\nFound companies:")
+        print("-" * 30)
+        for i, company in enumerate(results["openai"], 1):
+            print(f"\n{i}. {company.get('name', 'Unknown')}")
+            print(f"   Description: {company.get('description', 'N/A')}")
+            print(f"   URL: {company.get('url', 'N/A')}")
         
+        print("\n" + "=" * 50)
+        print(f"📊 Using {len(results['openai'])} OpenAI-generated companies...")
         return results
+
+    def _parse_openai_response(self, content: str) -> List[Dict]:
+        """Helper method to parse OpenAI response into structured data"""
+        companies = []
+        current_company = {}
+        
+        lines = content.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # If we find a new company entry, save the previous one
+            if line.lower().startswith("company:") and current_company:
+                companies.append(current_company)
+                current_company = {}
+            
+            # Parse the line
+            if ":" in line:
+                parts = line.split(":", 1)
+                key = parts[0].strip().lower()
+                value = parts[1].strip()
+                
+                if "company" in key:
+                    current_company["name"] = value
+                elif "description" in key:
+                    current_company["description"] = value
+                elif "url" in key:
+                    current_company["url"] = value
+        
+        # Add the last company if exists
+        if current_company:
+            companies.append(current_company)
+        
+        return companies
 
     def categorize_leads(self, data: Dict[str, List[Dict]]) -> pd.DataFrame:
         # Use LLM to categorize each lead
         categorized_data = []
         
-        for source, results in data.items():
-            for result in results:
-                categorization_prompt = f"""
-                Categorize this entity into one of these categories:
-                - ConTech Startup
-                - ConTech Investors
-                - ConTech Adopter
-                - ConTech Innovator
-
-                Entity information:
-                {result}
-                """
-                
-                response = self.llm.invoke([
-                    SystemMessage(content="You are a construction technology industry expert."),
-                    HumanMessage(content=categorization_prompt)
-                ])
-                
-                categorized_data.append({
-                    "Name": result.get("name", "Unknown"),
-                    "Category": response.content,
-                    "Description": result.get("description", ""),
-                    "Source": source
-                })
+        # Calculate total number of leads to categorize
+        total_leads = sum(len(results) for results in data.values())
         
-        return pd.DataFrame(categorized_data)
+        # Use LLM to categorize each lead with progress bar
+        with tqdm(total=total_leads, desc="Categorizing companies") as pbar:
+            for source, results in data.items():
+                for result in results:
+                    # Ensure result is a dictionary
+                    if isinstance(result, str):
+                        result = {
+                            "name": result,
+                            "description": result,
+                            "url": "N/A"
+                        }
+                    
+                    # Clean the name before using it in the prompt
+                    clean_name = result.get('name', 'Unknown').replace('*', '').strip()
+                    
+                    categorization_prompt = f"""
+                    Categorize this entity into exactly one of these categories:
+                    ConTech Startup
+                    ConTech Investors
+                    ConTech Adopter
+
+                    Entity information:
+                    Company: {clean_name}
+                    Description: {result.get('description', 'N/A')}
+
+                    Return only the exact category name from the list above, without any additional text, symbols, or formatting.
+                    """
+                    
+                    response = self.llm.invoke([
+                        SystemMessage(content="You are a construction technology industry expert. Respond only with the exact category name."),
+                        HumanMessage(content=categorization_prompt)
+                    ])
+                    
+                    # Clean up the category response
+                    category = response.content.strip()
+                    # Remove any markdown formatting or special characters
+                    category = category.replace('*', '').replace('`', '').replace('#', '').strip()
+                    
+                    categorized_data.append({
+                        "Name": clean_name,
+                        "Category": category,
+                        "Description": result.get("description", ""),
+                        "URL": result.get("url", "N/A"),
+                        "Source": source
+                    })
+                    
+                    pbar.update(1)
+        
+        # Create DataFrame and ensure columns are in the desired order
+        df = pd.DataFrame(categorized_data)
+        column_order = ["Name", "Category", "Description", "URL", "Source"]
+        df = df[column_order]
+        
+        return df
 
     def create_stakeholder_map(self, df: pd.DataFrame) -> nx.Graph:
         G = nx.Graph()
@@ -222,28 +242,34 @@ class AECNetworkAgent:
         for _, row in df.iterrows():
             G.add_node(row["Name"], category=row["Category"])
         
-        # Use LLM to identify connections
-        for i, row1 in df.iterrows():
-            for j, row2 in df.iterrows():
-                if i < j:
-                    connection_prompt = f"""
-                    Analyze if there's a potential connection between these entities:
-                    Entity 1: {row1['Name']} ({row1['Category']})
-                    {row1['Description']}
-                    
-                    Entity 2: {row2['Name']} ({row2['Category']})
-                    {row2['Description']}
-                    
-                    Return only 'Yes' or 'No'.
-                    """
-                    
-                    response = self.llm.invoke([
-                        SystemMessage(content="Analyze potential business connections."),
-                        HumanMessage(content=connection_prompt)
-                    ])
-                    
-                    if response.content.strip().lower() == "yes":
-                        G.add_edge(row1["Name"], row2["Name"])
+        # Calculate total number of connections to check
+        total_connections = sum(range(len(df)))
+        
+        # Use LLM to identify connections with progress bar
+        with tqdm(total=total_connections, desc="Analyzing connections") as pbar:
+            for i, row1 in df.iterrows():
+                for j, row2 in df.iterrows():
+                    if i < j:
+                        connection_prompt = f"""
+                        Analyze if there's a potential connection between these entities:
+                        Entity 1: {row1['Name']} ({row1['Category']})
+                        {row1['Description']}
+                        
+                        Entity 2: {row2['Name']} ({row2['Category']})
+                        {row2['Description']}
+                        
+                        Return only 'Yes' or 'No'.
+                        """
+                        
+                        response = self.llm.invoke([
+                            SystemMessage(content="Analyze potential business connections."),
+                            HumanMessage(content=connection_prompt)
+                        ])
+                        
+                        if response.content.strip().lower() == "yes":
+                            G.add_edge(row1["Name"], row2["Name"])
+                        
+                        pbar.update(1)
         
         return G
 
@@ -316,7 +342,6 @@ class AECNetworkAgent:
             "ConTech Startup": "skyblue",
             "ConTech Investors": "lightgreen",
             "ConTech Adopter": "salmon",
-            "ConTech Innovator": "purple"
         }
         
         for category, color in colors.items():
@@ -348,49 +373,71 @@ def main():
     # Print configuration status
     print("\n🔧 Configuration:")
     print(f"{'✅' if USE_OPENAI else '❌'} OpenAI API: {'Enabled' if USE_OPENAI else 'Disabled'}")
-    print(f"{'✅' if USE_GOOGLE_SEARCH else '❌'} Google Search: {'Enabled' if USE_GOOGLE_SEARCH else 'Disabled'}")
+    print(f"{'❌' if SKIP_CATEGORIZATION else '✅'} Categorization: {'Skipped' if SKIP_CATEGORIZATION else 'Enabled'}")
+    print(f"{'❌' if SKIP_STAKEHOLDER_MAP else '✅'} Stakeholder Map: {'Skipped' if SKIP_STAKEHOLDER_MAP else 'Enabled'}")
+    print(f"{'❌' if SKIP_PROPOSITIONS else '✅'} Propositions: {'Skipped' if SKIP_PROPOSITIONS else 'Enabled'}")
     print()
     
-    # Create agent with Google search setting based on configuration
-    skip_google = not USE_GOOGLE_SEARCH
-    
     # Setup API keys and initialize clients
-    use_google = setup_api_keys(skip_google)
-    clients = initialize_clients(use_google)
+    setup_api_keys()
+    clients = initialize_clients()
     
-    # Create agent with appropriate Google search setting
-    agent = AECNetworkAgent(clients, skip_google_search=skip_google)
+    # Create agent
+    agent = AECNetworkAgent(clients)
     
     # Execute the workflow
     print("🔍 Searching for leads...")
     data = agent.search_and_collect_data()
     
-    print("📊 Categorizing leads...")
-    categorized_df = agent.categorize_leads(data)
-    # Save to script directory
-    output_path = os.path.join(agent.output_dir, 'categorized_leads.csv')
-    categorized_df.to_csv(output_path, index=False)
+    if not SKIP_CATEGORIZATION:
+        print("📊 Categorizing leads...")
+        categorized_df = agent.categorize_leads(data)
+        # Save to script directory
+        output_path = os.path.join(agent.output_dir, 'categorized_leads.csv')
+        categorized_df.to_csv(output_path, index=False)
+    else:
+        # Create a basic DataFrame without categorization
+        categorized_data = []
+        for source, results in data.items():
+            for result in results:
+                categorized_data.append({
+                    "Name": result.get("name", "Unknown"),
+                    "Category": "Uncategorized",
+                    "Description": result.get("description", ""),
+                    "URL": result.get("url", "N/A"),
+                    "Source": source
+                })
+        categorized_df = pd.DataFrame(categorized_data)
+        output_path = os.path.join(agent.output_dir, 'leads.csv')
+        categorized_df.to_csv(output_path, index=False)
     
-    print("🕸️ Creating stakeholder map...")
-    G = agent.create_stakeholder_map(categorized_df)
-    agent.visualize_stakeholder_map(G)
+    if not SKIP_STAKEHOLDER_MAP:
+        print("🕸️ Creating stakeholder map...")
+        G = agent.create_stakeholder_map(categorized_df)
+        agent.visualize_stakeholder_map(G)
     
-    print("📝 Generating propositions...")
-    propositions = agent.generate_propositions(categorized_df)
-    
-    # Save propositions to script directory
-    output_path = os.path.join(agent.output_dir, 'propositions.txt')
-    with open(output_path, 'w') as f:
-        for name, proposition in propositions.items():
-            f.write(f"\n{'='*50}\n")
-            f.write(f"Proposition for: {name}\n")
-            f.write(f"{'='*50}\n")
-            f.write(f"{proposition}\n")
+    if not SKIP_PROPOSITIONS:
+        print("📝 Generating propositions...")
+        propositions = agent.generate_propositions(categorized_df)
+        
+        # Save propositions to script directory
+        output_path = os.path.join(agent.output_dir, 'propositions.txt')
+        with open(output_path, 'w') as f:
+            for name, proposition in propositions.items():
+                f.write(f"\n{'='*50}\n")
+                f.write(f"Proposition for: {name}\n")
+                f.write(f"{'='*50}\n")
+                f.write(f"{proposition}\n")
     
     print(f"\n✅ Process complete! Check output files in: {agent.output_dir}")
-    print("- categorized_leads.csv")
-    print("- stakeholder_map.png")
-    print("- propositions.txt")
+    if not SKIP_CATEGORIZATION:
+        print("- categorized_leads.csv")
+    else:
+        print("- leads.csv")
+    if not SKIP_STAKEHOLDER_MAP:
+        print("- stakeholder_map.png")
+    if not SKIP_PROPOSITIONS:
+        print("- propositions.txt")
 
 if __name__ == "__main__":
     main()
