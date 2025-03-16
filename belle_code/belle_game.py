@@ -27,7 +27,6 @@ BOWL_Y = WINDOW_HEIGHT - 120
 
 # Load images
 pugicorn = pygame.image.load(os.path.join(ASSETS_DIR, "pugicorn.png"))
-pugicorn = pygame.transform.scale(pugicorn, (80, 80))
 
 corgi = pygame.image.load(os.path.join(ASSETS_DIR, "corgi.png"))
 corgi = pygame.transform.scale(corgi, (60, 60))

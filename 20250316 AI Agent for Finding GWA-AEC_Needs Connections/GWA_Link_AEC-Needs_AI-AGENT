@@ -1,0 +1,374 @@
+import warnings
+warnings.filterwarnings("ignore", category=Warning)  # Add this to handle SSL warnings
+
+# Configuration flags
+USE_GOOGLE_SEARCH = True  # Set to True to enable Google Search
+USE_OPENAI = False        # Set to False to use dummy responses instead of OpenAI
+
+import os
+from typing import List, Dict, Any
+from langgraph.graph import Graph
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_community.utilities.google_search import GoogleSearchAPIWrapper
+import networkx as nx
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def get_dummy_response(prompt: str) -> str:
+    """Generate dummy responses when OpenAI is disabled"""
+    if "categorize" in prompt.lower():
+        return "ConTech Startup"
+    elif "connection" in prompt.lower() or "synergy" in prompt.lower():
+        return "Yes"
+    else:
+        return "Sample proposition: Let's collaborate on a pilot project to implement your technology."
+
+def setup_api_keys(skip_google_search=True):
+    """Setup API keys with user input if not found in environment"""
+    if USE_OPENAI and not os.getenv('OPENAI_API_KEY'):
+        print("\n⚠️ OPENAI_API_KEY not found in environment variables")
+        api_key = input("Please enter your OpenAI API key: ").strip()
+        os.environ['OPENAI_API_KEY'] = api_key
+        print("✅ OpenAI API key set")
+    
+    # Only check for Google API keys if Google Search is enabled
+    if USE_GOOGLE_SEARCH and not skip_google_search:
+        need_google_setup = not os.getenv('GOOGLE_API_KEY') or not os.getenv('GOOGLE_CSE_ID')
+        if need_google_setup:
+            print("\n⚠️ Google Search API configuration needed")
+            api_key = input("Please enter your Google API key (or press Enter to skip Google search): ").strip()
+            if api_key:
+                os.environ['GOOGLE_API_KEY'] = api_key
+                cse_id = input("Please enter your Google Custom Search Engine ID: ").strip()
+                if cse_id:
+                    os.environ['GOOGLE_CSE_ID'] = cse_id
+                    print("✅ Google Search configuration complete")
+                    return True
+            print("ℹ️ Skipping Google search setup")
+            return False
+        return True
+    return False
+
+# Initialize API clients after setting up keys
+def initialize_clients(use_google=True):
+    clients = {}
+    
+    if USE_OPENAI:
+        clients["llm"] = ChatOpenAI(model="gpt-4")
+    else:
+        print("ℹ️ Using dummy responses instead of OpenAI")
+        clients["llm"] = type('DummyLLM', (), {
+            'invoke': lambda self, messages: type('DummyResponse', (), {'content': get_dummy_response(messages[-1].content)})()
+        })()
+    
+    if USE_GOOGLE_SEARCH and use_google:
+        try:
+            from langchain_google_community import GoogleSearchAPIWrapper  # Updated import
+            clients["google_search"] = GoogleSearchAPIWrapper()
+            print("✅ Google Search API initialized")
+        except Exception as e:
+            print(f"⚠️ Error setting up Google Search: {e}")
+            print("ℹ️ Falling back to sample data")
+            clients["google_search"] = None
+            use_google = False
+    
+    return clients
+
+def get_script_dir():
+    """Get the directory where the script is located"""
+    return os.path.dirname(os.path.abspath(__file__))
+
+class AECNetworkAgent:
+    def __init__(self, clients, skip_google_search=True):
+        self.categories = {
+            "ConTech Startup": [],
+            "ConTech Investors": [],
+            "ConTech Adopter": [],
+            "ConTech Innovator": []
+        }
+        self.connections = []
+        self.skip_google_search = skip_google_search
+        self.llm = clients["llm"]
+        self.google_search = clients.get("google_search")
+        self.output_dir = get_script_dir()  # Add output directory
+        
+    def search_and_collect_data(self) -> Dict[str, List[Dict]]:
+        # Search query
+        query = "AEC Construction Technology startups robotics AI investors users adopter innovators"
+        
+        # Initialize results dictionary
+        results = {}
+        max_results = 20  # Limit total results
+        
+        # Only perform Google search if not skipped and client is available
+        if not self.skip_google_search and self.google_search is not None:
+            try:
+                google_results = self.google_search.run(query)
+                # Limit Google results
+                results["google"] = google_results[:max_results]
+                print(f"🔍 Including {len(results['google'])} Google search results...")
+            except Exception as e:
+                print(f"⚠️ Error during Google search: {e}")
+                print("ℹ️ Falling back to sample data")
+                self.skip_google_search = True
+        
+        # Use sample data if Google search is skipped or failed
+        if self.skip_google_search or not results:
+            print("🔍 Using sample AEC technology companies and stakeholders...")
+            results["manual"] = [
+                {
+                    "name": "BuildBot Robotics",
+                    "description": "A startup developing autonomous robots for construction site inspection and monitoring",
+                    "url": "https://example.com/buildbot"
+                },
+                {
+                    "name": "AEC Ventures Capital",
+                    "description": "Leading venture capital firm specializing in construction technology investments",
+                    "url": "https://example.com/aecvc"
+                },
+                {
+                    "name": "SmartSite Solutions",
+                    "description": "AI-powered construction management platform for large scale projects",
+                    "url": "https://example.com/smartsite"
+                },
+                {
+                    "name": "BuildTech Partners",
+                    "description": "Construction industry accelerator and innovation hub",
+                    "url": "https://example.com/buildtech"
+                },
+                {
+                    "name": "ConstructCorp Global",
+                    "description": "Major construction company actively adopting and implementing new technologies",
+                    "url": "https://example.com/constructcorp"
+                },
+                {
+                    "name": "AI Build Analytics",
+                    "description": "Startup providing AI-driven analytics for construction project optimization",
+                    "url": "https://example.com/aibuild"
+                },
+                {
+                    "name": "TechBuild Innovations",
+                    "description": "Research and development firm creating new construction automation technologies",
+                    "url": "https://example.com/techbuild"
+                },
+                {
+                    "name": "Construction Future Fund",
+                    "description": "Investment fund focused on construction technology and innovation",
+                    "url": "https://example.com/cff"
+                }
+            ]
+            print(f"📊 Using {len(results['manual'])} sample companies...")
+        
+        return results
+
+    def categorize_leads(self, data: Dict[str, List[Dict]]) -> pd.DataFrame:
+        # Use LLM to categorize each lead
+        categorized_data = []
+        
+        for source, results in data.items():
+            for result in results:
+                categorization_prompt = f"""
+                Categorize this entity into one of these categories:
+                - ConTech Startup
+                - ConTech Investors
+                - ConTech Adopter
+                - ConTech Innovator
+
+                Entity information:
+                {result}
+                """
+                
+                response = self.llm.invoke([
+                    SystemMessage(content="You are a construction technology industry expert."),
+                    HumanMessage(content=categorization_prompt)
+                ])
+                
+                categorized_data.append({
+                    "Name": result.get("name", "Unknown"),
+                    "Category": response.content,
+                    "Description": result.get("description", ""),
+                    "Source": source
+                })
+        
+        return pd.DataFrame(categorized_data)
+
+    def create_stakeholder_map(self, df: pd.DataFrame) -> nx.Graph:
+        G = nx.Graph()
+        
+        # Add nodes
+        for _, row in df.iterrows():
+            G.add_node(row["Name"], category=row["Category"])
+        
+        # Use LLM to identify connections
+        for i, row1 in df.iterrows():
+            for j, row2 in df.iterrows():
+                if i < j:
+                    connection_prompt = f"""
+                    Analyze if there's a potential connection between these entities:
+                    Entity 1: {row1['Name']} ({row1['Category']})
+                    {row1['Description']}
+                    
+                    Entity 2: {row2['Name']} ({row2['Category']})
+                    {row2['Description']}
+                    
+                    Return only 'Yes' or 'No'.
+                    """
+                    
+                    response = self.llm.invoke([
+                        SystemMessage(content="Analyze potential business connections."),
+                        HumanMessage(content=connection_prompt)
+                    ])
+                    
+                    if response.content.strip().lower() == "yes":
+                        G.add_edge(row1["Name"], row2["Name"])
+        
+        return G
+
+    def generate_propositions(self, df: pd.DataFrame) -> Dict[str, str]:
+        propositions = {}
+        
+        for _, lead in df.iterrows():
+            # First, find relevant connections for this lead
+            related_companies = []
+            for _, other_lead in df.iterrows():
+                if other_lead['Name'] != lead['Name']:
+                    connection_prompt = f"""
+                    Analyze the potential synergy between:
+                    Company 1: {lead['Name']} ({lead['Category']})
+                    Description: {lead['Description']}
+                    
+                    Company 2: {other_lead['Name']} ({other_lead['Category']})
+                    Description: {other_lead['Description']}
+                    
+                    Return only 'Yes' or 'No'.
+                    """
+                    
+                    response = self.llm.invoke([
+                        SystemMessage(content="Analyze potential business synergies."),
+                        HumanMessage(content=connection_prompt)
+                    ])
+                    
+                    if response.content.strip().lower() == "yes":
+                        related_companies.append(other_lead)
+
+            # Generate a more specific proposition focusing on connections
+            proposition_prompt = f"""
+            Create a personalized message for:
+            Company: {lead['Name']}
+            Category: {lead['Category']}
+            Description: {lead['Description']}
+            
+            Connected Companies: {', '.join([f"{comp['Name']} ({comp['Category']})" for comp in related_companies])}
+
+            Write a LinkedIn message (max 300 characters) that:
+            1. Mentions specific ways they could collaborate with one or two of their most relevant connections
+            2. Highlights a concrete business opportunity or pilot project between them that I could help with in general
+            3. Focuses on mutual benefits and specific outcomes
+            4. Discusses how I would like to get involved & how I think I can add significant value
+            5. Has a call to action for us to further discuss
+            
+            Don't mention consulting or advisory services. Focus purely on the direct business opportunity between the companies & how I am add value to that and/or help them apply this model in different regions & with different companies / networks.
+            """
+            
+            response = self.llm.invoke([
+                SystemMessage(content="""
+                You are crafting direct business opportunity messages.
+                Focus on specific collaborations and concrete projects.
+                Be direct and business-focused.
+                Don't mention intermediaries or advisors.
+                """),
+                HumanMessage(content=proposition_prompt)
+            ])
+            
+            propositions[lead["Name"]] = response.content
+        
+        return propositions
+
+    def visualize_stakeholder_map(self, G: nx.Graph):
+        plt.figure(figsize=(12, 8))
+        pos = nx.spring_layout(G)
+        
+        # Draw nodes for each category with different colors
+        colors = {
+            "ConTech Startup": "skyblue",
+            "ConTech Investors": "lightgreen",
+            "ConTech Adopter": "salmon",
+            "ConTech Innovator": "purple"
+        }
+        
+        for category, color in colors.items():
+            nodes = [node for node, attr in G.nodes(data=True) 
+                    if attr.get("category") == category]
+            nx.draw_networkx_nodes(G, pos, nodelist=nodes, node_color=color, 
+                                 node_size=1000, alpha=0.7)
+        
+        # Draw edges and labels
+        nx.draw_networkx_edges(G, pos, alpha=0.5)
+        nx.draw_networkx_labels(G, pos)
+        
+        # Add legend
+        legend_elements = [plt.Line2D([0], [0], marker='o', color='w', 
+                         markerfacecolor=color, label=cat, markersize=10)
+                         for cat, color in colors.items()]
+        plt.legend(handles=legend_elements)
+        
+        plt.title("AEC Technology Stakeholder Network")
+        plt.axis('off')
+        plt.tight_layout()
+        
+        # Save to script directory
+        output_path = os.path.join(self.output_dir, 'stakeholder_map.png')
+        plt.savefig(output_path)
+        plt.close()
+
+def main():
+    # Print configuration status
+    print("\n🔧 Configuration:")
+    print(f"{'✅' if USE_OPENAI else '❌'} OpenAI API: {'Enabled' if USE_OPENAI else 'Disabled'}")
+    print(f"{'✅' if USE_GOOGLE_SEARCH else '❌'} Google Search: {'Enabled' if USE_GOOGLE_SEARCH else 'Disabled'}")
+    print()
+    
+    # Create agent with Google search setting based on configuration
+    skip_google = not USE_GOOGLE_SEARCH
+    
+    # Setup API keys and initialize clients
+    use_google = setup_api_keys(skip_google)
+    clients = initialize_clients(use_google)
+    
+    # Create agent with appropriate Google search setting
+    agent = AECNetworkAgent(clients, skip_google_search=skip_google)
+    
+    # Execute the workflow
+    print("🔍 Searching for leads...")
+    data = agent.search_and_collect_data()
+    
+    print("📊 Categorizing leads...")
+    categorized_df = agent.categorize_leads(data)
+    # Save to script directory
+    output_path = os.path.join(agent.output_dir, 'categorized_leads.csv')
+    categorized_df.to_csv(output_path, index=False)
+    
+    print("🕸️ Creating stakeholder map...")
+    G = agent.create_stakeholder_map(categorized_df)
+    agent.visualize_stakeholder_map(G)
+    
+    print("📝 Generating propositions...")
+    propositions = agent.generate_propositions(categorized_df)
+    
+    # Save propositions to script directory
+    output_path = os.path.join(agent.output_dir, 'propositions.txt')
+    with open(output_path, 'w') as f:
+        for name, proposition in propositions.items():
+            f.write(f"\n{'='*50}\n")
+            f.write(f"Proposition for: {name}\n")
+            f.write(f"{'='*50}\n")
+            f.write(f"{proposition}\n")
+    
+    print(f"\n✅ Process complete! Check output files in: {agent.output_dir}")
+    print("- categorized_leads.csv")
+    print("- stakeholder_map.png")
+    print("- propositions.txt")
+
+if __name__ == "__main__":
+    main()
