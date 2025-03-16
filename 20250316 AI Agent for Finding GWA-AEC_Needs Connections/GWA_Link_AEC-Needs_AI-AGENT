@@ -14,6 +14,9 @@ from langchain_community.utilities.google_search import GoogleSearchAPIWrapper
 import networkx as nx
 import matplotlib.pyplot as plt
 import pandas as pd
+import sys
+from dotenv import load_dotenv, set_key
+from pathlib import Path
 
 def get_dummy_response(prompt: str) -> str:
     """Generate dummy responses when OpenAI is disabled"""
@@ -26,24 +29,34 @@ def get_dummy_response(prompt: str) -> str:
 
 def setup_api_keys(skip_google_search=True):
     """Setup API keys with user input if not found in environment"""
+    # Load existing .env file or create if doesn't exist
+    env_path = Path(get_script_dir()) / '.env'
+    env_path.touch(exist_ok=True)
+    load_dotenv(env_path)
+    
+    # Check for OpenAI API key
     if USE_OPENAI and not os.getenv('OPENAI_API_KEY'):
         print("\n⚠️ OPENAI_API_KEY not found in environment variables")
         api_key = input("Please enter your OpenAI API key: ").strip()
+        set_key(env_path, 'OPENAI_API_KEY', api_key)
         os.environ['OPENAI_API_KEY'] = api_key
-        print("✅ OpenAI API key set")
+        print("✅ OpenAI API key saved")
     
-    # Only check for Google API keys if Google Search is enabled
+    # Check for Google API keys if Google Search is enabled
     if USE_GOOGLE_SEARCH and not skip_google_search:
         need_google_setup = not os.getenv('GOOGLE_API_KEY') or not os.getenv('GOOGLE_CSE_ID')
         if need_google_setup:
             print("\n⚠️ Google Search API configuration needed")
             api_key = input("Please enter your Google API key (or press Enter to skip Google search): ").strip()
             if api_key:
+                set_key(env_path, 'GOOGLE_API_KEY', api_key)
                 os.environ['GOOGLE_API_KEY'] = api_key
+                
                 cse_id = input("Please enter your Google Custom Search Engine ID: ").strip()
                 if cse_id:
+                    set_key(env_path, 'GOOGLE_CSE_ID', cse_id)
                     os.environ['GOOGLE_CSE_ID'] = cse_id
-                    print("✅ Google Search configuration complete")
+                    print("✅ Google Search configuration saved")
                     return True
             print("ℹ️ Skipping Google search setup")
             return False
@@ -109,9 +122,18 @@ class AECNetworkAgent:
                 results["google"] = google_results[:max_results]
                 print(f"🔍 Including {len(results['google'])} Google search results...")
             except Exception as e:
-                print(f"⚠️ Error during Google search: {e}")
-                print("ℹ️ Falling back to sample data")
-                self.skip_google_search = True
+                print(f"\n⚠️ Error during Google search: {e}")
+                while True:
+                    response = input("\nWould you like to continue with sample data instead? (yes/no): ").lower().strip()
+                    if response in ['yes', 'y']:
+                        print("\nℹ️ Continuing with sample data...")
+                        self.skip_google_search = True
+                        break
+                    elif response in ['no', 'n']:
+                        print("\n❌ Exiting program...")
+                        sys.exit(1)
+                    else:
+                        print("\n⚠️ Please answer 'yes' or 'no'")
         
         # Use sample data if Google search is skipped or failed
         if self.skip_google_search or not results:
