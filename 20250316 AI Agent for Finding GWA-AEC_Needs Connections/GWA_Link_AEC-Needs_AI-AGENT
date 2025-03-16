@@ -4,9 +4,13 @@ warnings.filterwarnings("ignore", category=Warning)  # Add this to handle SSL wa
 
 # Configuration flags
 USE_OPENAI = True        # Set to False to use dummy responses instead of OpenAI
-SKIP_PROPOSITIONS = True  # Set to True to skip generating propositions
-SKIP_STAKEHOLDER_MAP = True  # Set to True to skip creating stakeholder map
 SKIP_CATEGORIZATION = False  # Set to True to skip categorizing leads
+SKIP_STAKEHOLDER_MAP = True  # Set to True to skip creating stakeholder map - THIS DOESN'T SHOW MUCH WHEN THERE ARE 10+ COMPANIES
+SKIP_PROPOSITIONS = True  # Set to True to skip generating propositions
+SKIP_RELATIONS_CSV = True  # Set to True to skip creating company relations CSV
+
+# Define constants
+NUM_COMPANIES = 100  # Number of companies to search for
 
 import os
 from typing import List, Dict, Any
@@ -22,6 +26,7 @@ from dotenv import load_dotenv, set_key
 from pathlib import Path
 from tqdm import tqdm
 import time  # Add this import at the top
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def get_dummy_response(prompt: str) -> str:
     """Generate dummy responses when OpenAI is disabled"""
@@ -81,13 +86,13 @@ class AECNetworkAgent:
         print("==================================================")
         
         try:
-            openai_prompt = """Please provide a list of 100 real companies in total. Find approximately 33 companies for each category:
+            openai_prompt = f"""Please provide a list of {NUM_COMPANIES} real companies in total. Find approximately 1/3 for each category:
             1) startups, innovators, creators, technology suppliers, early stage companies, 
             2) corporate venture capital, private equity, venture capitalists, investors, 
             3) adopters, and 
             in the AEC (Architecture, Engineering, Construction) technology space.
 
-            Use the following urlsand to complete this search task.
+            Use the following urls and to complete this search task.
             - https://contechroundup.substack.com/
             - https://builtworlds.com/
             - https://builtworlds.com/insights/2024-builtworlds-top-50-venture-investors/
@@ -108,7 +113,7 @@ class AECNetworkAgent:
             Focus on companies involved in robotics, AI, and construction technology.
             Format each entry exactly as shown above, with each field on a new line."""
             
-            print("Generating company list, this will take OpenAi a minute to complete, be patient... ")
+            print(f"Generating list of {NUM_COMPANIES} companies, this will take OpenAI a minute to complete, be patient... ")
             
             # Make the API call
             response = self.llm.invoke([
@@ -174,66 +179,55 @@ class AECNetworkAgent:
         return companies
 
     def categorize_leads(self, data: Dict[str, List[Dict]]) -> pd.DataFrame:
-        # Use LLM to categorize each lead
         categorized_data = []
+        BATCH_SIZE = 5  # Process 5 companies at a time
         
-        # Calculate total number of leads to categorize
-        total_leads = sum(len(results) for results in data.values())
+        # Flatten the data into a single list
+        all_companies = []
+        for source, results in data.items():
+            for result in results:
+                if isinstance(result, str):
+                    result = {"name": result, "description": result, "url": "N/A"}
+                result["source"] = source
+                all_companies.append(result)
         
-        # Use LLM to categorize each lead with progress bar
-        with tqdm(total=total_leads, desc="Categorizing companies") as pbar:
-            for source, results in data.items():
-                for result in results:
-                    # Ensure result is a dictionary
-                    if isinstance(result, str):
-                        result = {
-                            "name": result,
-                            "description": result,
-                            "url": "N/A"
-                        }
-                    
-                    # Clean the name before using it in the prompt
-                    clean_name = result.get('name', 'Unknown').replace('*', '').strip()
-                    
-                    categorization_prompt = f"""
-                    Categorize this entity into exactly one of these categories:
-                    ConTech Startup
-                    ConTech Investors
-                    ConTech Adopter
-
-                    Entity information:
-                    Company: {clean_name}
-                    Description: {result.get('description', 'N/A')}
-
-                    Return only the exact category name from the list above, without any additional text, symbols, or formatting.
-                    """
-                    
-                    response = self.llm.invoke([
-                        SystemMessage(content="You are a construction technology industry expert. Respond only with the exact category name."),
-                        HumanMessage(content=categorization_prompt)
-                    ])
-                    
-                    # Clean up the category response
-                    category = response.content.strip()
-                    # Remove any markdown formatting or special characters
-                    category = category.replace('*', '').replace('`', '').replace('#', '').strip()
-                    
+        total_batches = (len(all_companies) + BATCH_SIZE - 1) // BATCH_SIZE
+        
+        with tqdm(total=len(all_companies), desc="Categorizing companies") as pbar:
+            for i in range(0, len(all_companies), BATCH_SIZE):
+                batch = all_companies[i:i + BATCH_SIZE]
+                
+                # Create batch prompt
+                batch_prompt = "Categorize each company into exactly one category: ConTech Startup, ConTech Investors, or ConTech Adopter.\n\n"
+                for idx, company in enumerate(batch, 1):
+                    clean_name = company.get('name', 'Unknown').replace('*', '').strip()
+                    batch_prompt += f"Company {idx}:\nName: {clean_name}\nDescription: {company.get('description', 'N/A')}\n\n"
+                
+                batch_prompt += "Return ONLY a comma-separated list of categories in order, e.g.: 'ConTech Startup, ConTech Investors, ConTech Adopter'"
+                
+                response = self.llm.invoke([
+                    SystemMessage(content="You are a construction technology expert. Respond only with comma-separated categories."),
+                    HumanMessage(content=batch_prompt)
+                ])
+                
+                # Parse categories
+                categories = [cat.strip() for cat in response.content.split(',')]
+                
+                # Add categorized companies to results
+                for company, category in zip(batch, categories):
+                    clean_name = company.get('name', 'Unknown').replace('*', '').strip()
                     categorized_data.append({
                         "Name": clean_name,
                         "Category": category,
-                        "Description": result.get("description", ""),
-                        "URL": result.get("url", "N/A"),
-                        "Source": source
+                        "Description": company.get("description", ""),
+                        "URL": company.get("url", "N/A"),
+                        "Source": company.get("source", "unknown")
                     })
-                    
                     pbar.update(1)
         
-        # Create DataFrame and ensure columns are in the desired order
+        # Create DataFrame
         df = pd.DataFrame(categorized_data)
-        column_order = ["Name", "Category", "Description", "URL", "Source"]
-        df = df[column_order]
-        
-        return df
+        return df[["Name", "Category", "Description", "URL", "Source"]]
 
     def create_stakeholder_map(self, df: pd.DataFrame) -> nx.Graph:
         G = nx.Graph()
@@ -275,61 +269,106 @@ class AECNetworkAgent:
 
     def generate_propositions(self, df: pd.DataFrame) -> Dict[str, str]:
         propositions = {}
+        relations_data = [] if not SKIP_RELATIONS_CSV else None  # Only create list if we're saving relations
+        MAX_WORKERS = 3  # Limit concurrent API calls
         
-        for _, lead in df.iterrows():
-            # First, find relevant connections for this lead
-            related_companies = []
-            for _, other_lead in df.iterrows():
-                if other_lead['Name'] != lead['Name']:
-                    connection_prompt = f"""
-                    Analyze the potential synergy between:
-                    Company 1: {lead['Name']} ({lead['Category']})
-                    Description: {lead['Description']}
-                    
-                    Company 2: {other_lead['Name']} ({other_lead['Category']})
-                    Description: {other_lead['Description']}
-                    
-                    Return only 'Yes' or 'No'.
-                    """
-                    
-                    response = self.llm.invoke([
-                        SystemMessage(content="Analyze potential business synergies."),
-                        HumanMessage(content=connection_prompt)
-                    ])
-                    
-                    if response.content.strip().lower() == "yes":
-                        related_companies.append(other_lead)
-
-            # Generate a more specific proposition focusing on connections
-            proposition_prompt = f"""
-            Create a personalized message for:
-            Company: {lead['Name']}
-            Category: {lead['Category']}
-            Description: {lead['Description']}
+        def process_company(lead_data):
+            lead_idx, lead = lead_data
             
-            Connected Companies: {', '.join([f"{comp['Name']} ({comp['Category']})" for comp in related_companies])}
-
-            Write a LinkedIn message (max 300 characters) that:
-            1. Mentions specific ways they could collaborate with one or two of their most relevant connections
-            2. Highlights a concrete business opportunity or pilot project between them that I could help with in general
-            3. Focuses on mutual benefits and specific outcomes
-            4. Discusses how I would like to get involved & how I think I can add significant value
-            5. Has a call to action for us to further discuss
+            # Get all potential connections in one API call
+            companies_prompt = f"""
+            Analyze potential synergies between {lead['Name']} ({lead['Category']}) and the following companies.
+            Return ONLY the numbers (comma-separated) of companies that have synergy potential.
             
-            Don't mention consulting or advisory services. Focus purely on the direct business opportunity between the companies & how I am add value to that and/or help them apply this model in different regions & with different companies / networks.
+            Company details:
+            {lead['Name']} ({lead['Category']}): {lead['Description']}
+            
+            Potential connections:
             """
             
+            # Add numbered list of other companies
+            other_companies = []
+            for j, other_lead in df.iterrows():
+                if lead_idx != j:
+                    other_companies.append(f"{j+1}. {other_lead['Name']} ({other_lead['Category']}): {other_lead['Description']}")
+            
+            companies_prompt += "\n".join(other_companies)
+            companies_prompt += "\n\nReturn ONLY the numbers of companies with synergy potential, comma-separated (e.g., '1,3,5')"
+            
+            # Get synergies
             response = self.llm.invoke([
-                SystemMessage(content="""
-                You are crafting direct business opportunity messages.
-                Focus on specific collaborations and concrete projects.
-                Be direct and business-focused.
-                Don't mention intermediaries or advisors.
-                """),
-                HumanMessage(content=proposition_prompt)
+                SystemMessage(content="You are a business synergy analyzer. Respond only with comma-separated numbers."),
+                HumanMessage(content=companies_prompt)
             ])
             
-            propositions[lead["Name"]] = response.content
+            # Process results
+            company_results = {
+                'propositions': None,
+                'relations': [] if not SKIP_RELATIONS_CSV else None  # Only track relations if needed
+            }
+            
+            try:
+                related_indices = [int(idx.strip()) - 1 for idx in response.content.strip().split(',') if idx.strip().isdigit()]
+                related_companies = [df.iloc[idx] for idx in related_indices if 0 <= idx < len(df)]
+                
+                # Only store relations if we're not skipping the CSV
+                if not SKIP_RELATIONS_CSV:
+                    for related in related_companies:
+                        company_results['relations'].append({
+                            'Company1': lead['Name'],
+                            'Category1': lead['Category'],
+                            'Company2': related['Name'],
+                            'Category2': related['Category']
+                        })
+                
+                if related_companies:
+                    proposition_prompt = f"""
+                    Create a personalized LinkedIn message (max 300 characters) for {lead['Name']} that:
+                    1. Mentions collaboration potential with {', '.join([comp['Name'] for comp in related_companies[:2]])}
+                    2. Focuses on concrete business opportunities and mutual benefits
+                    3. Includes a clear call to action
+                    """
+                    
+                    prop_response = self.llm.invoke([
+                        SystemMessage(content="Create concise, business-focused LinkedIn messages."),
+                        HumanMessage(content=proposition_prompt)
+                    ])
+                    
+                    company_results['propositions'] = (lead["Name"], prop_response.content)
+                else:
+                    company_results['propositions'] = (lead["Name"], f"No strong synergies identified for {lead['Name']} at this time.")
+            
+            except Exception as e:
+                print(f"\nError processing {lead['Name']}: {str(e)}")
+                company_results['propositions'] = (lead["Name"], f"Error generating proposition for {lead['Name']}")
+            
+            return company_results
+        
+        # Process companies in parallel
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_company = {
+                executor.submit(process_company, (i, row)): row['Name'] 
+                for i, row in df.iterrows()
+            }
+            
+            with tqdm(total=len(df), desc="Generating propositions") as pbar:
+                for future in as_completed(future_to_company):
+                    company_name = future_to_company[future]
+                    try:
+                        result = future.result()
+                        if result['propositions']:
+                            propositions[result['propositions'][0]] = result['propositions'][1]
+                        if not SKIP_RELATIONS_CSV and result['relations']:
+                            relations_data.extend(result['relations'])
+                    except Exception as e:
+                        print(f"\nError processing {company_name}: {str(e)}")
+                    pbar.update(1)
+        
+        # Save relations to CSV only if not skipped
+        if not SKIP_RELATIONS_CSV and relations_data:
+            relations_df = pd.DataFrame(relations_data)
+            output_path = os.path.join(self.output_dir, 'company_relations.csv')
+            relations_df.to_csv(output_path, index=False)
         
         return propositions
 
@@ -376,6 +415,7 @@ def main():
     print(f"{'❌' if SKIP_CATEGORIZATION else '✅'} Categorization: {'Skipped' if SKIP_CATEGORIZATION else 'Enabled'}")
     print(f"{'❌' if SKIP_STAKEHOLDER_MAP else '✅'} Stakeholder Map: {'Skipped' if SKIP_STAKEHOLDER_MAP else 'Enabled'}")
     print(f"{'❌' if SKIP_PROPOSITIONS else '✅'} Propositions: {'Skipped' if SKIP_PROPOSITIONS else 'Enabled'}")
+    print(f"{'❌' if SKIP_RELATIONS_CSV else '✅'} Relations CSV: {'Skipped' if SKIP_RELATIONS_CSV else 'Enabled'}")
     print()
     
     # Setup API keys and initialize clients
@@ -438,6 +478,8 @@ def main():
         print("- stakeholder_map.png")
     if not SKIP_PROPOSITIONS:
         print("- propositions.txt")
+        if not SKIP_RELATIONS_CSV:
+            print("- company_relations.csv")
 
 if __name__ == "__main__":
     main()
