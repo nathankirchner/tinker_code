@@ -5,8 +5,8 @@ warnings.filterwarnings("ignore", category=Warning)  # Add this to handle SSL wa
 # Configuration flags
 USE_OPENAI = True        # Set to False to use dummy responses instead of OpenAI
 SKIP_CATEGORIZATION = False  # Set to True to skip categorizing leads
-SKIP_STAKEHOLDER_MAP = False  # Set to True to skip creating stakeholder map - THIS DOESN'T SHOW MUCH WHEN THERE ARE 10+ COMPANIES
-SKIP_PROPOSITIONS = True  # Set to True to skip generating propositions
+SKIP_STAKEHOLDER_MAP = False  # Set to True to skip creating stakeholder map - THIS DOESN'T SHOW MUCH WHEN THERE ARE 10+ COMPANIES BUT IS NEEDED TO FIND COMPANY CONNETIONS
+SKIP_PROPOSITIONS = False  # Set to True to skip generating propositions
 SKIP_RELATIONS_CSV = True  # Set to True to skip creating company relations CSV - NOT CURRENTLY MEANINGFUL
 
 # Define constants
