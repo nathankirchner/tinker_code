@@ -8,13 +8,15 @@ SKIP_CATEGORIZATION = False  # Set to True to skip categorizing leads
 SKIP_STAKEHOLDER_MAP = False  # Set to True to skip creating stakeholder map - THIS DOESN'T SHOW MUCH WHEN THERE ARE 10+ COMPANIES BUT IS NEEDED TO FIND COMPANY CONNETIONS
 SKIP_PROPOSITIONS = False  # Set to True to skip generating propositions
 SKIP_RELATIONS_CSV = True  # Set to True to skip creating company relations CSV - NOT CURRENTLY MEANINGFUL
+USE_DEFAULT_URL = True  # Set to True to use default URL, False to prompt for URL
+DEFAULT_URL = "https://www.presien.com/"  # Default company URL to analyze
 
 # Define constants
-NUM_COMPANIES = 100  # Number of companies to search for
+NUM_COMPANIES = 25  # Number of companies to search for
 NUM_RELATED_COMPANIES = 25  # Number of related companies to find
 
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from langgraph.graph import Graph
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -29,6 +31,9 @@ from tqdm import tqdm
 import time  # Add this import at the top
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fpdf import FPDF  # Change back to standard FPDF
+import json
+import tkinter as tk
+from tkinter import messagebox
 
 def get_dummy_response(prompt: str) -> str:
     """Generate dummy responses when OpenAI is disabled"""
@@ -73,11 +78,45 @@ def get_script_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 def get_company_input():
-    """Get company URL from user"""
+    """Get company URL from user or use default"""
     print("\n🔍 Company Input:")
     print("==================================================")
-    company_url = input("Please enter the company's website URL: ").strip()
-    return company_url
+    
+    if USE_DEFAULT_URL:
+        print(f"Using default URL: {DEFAULT_URL}")
+        return DEFAULT_URL
+    
+    while True:
+        company_url = input("Please enter the company's website URL: ").strip()
+        if company_url:  # Check if URL is not empty
+            return company_url
+        print("URL cannot be empty. Please try again.")
+
+def clean_text(text: str) -> str:
+    """Clean text from OpenAI responses"""
+    if not isinstance(text, str):
+        return str(text)
+    
+    # Replace smart quotes and apostrophes with standard ASCII versions
+    replacements = {
+        ''': "'",  # Smart single quote (right)
+        ''': "'",  # Smart single quote (left)
+        '"': '"',  # Smart double quote (right)
+        '"': '"',  # Smart double quote (left)
+        '…': '...',  # Ellipsis
+        '–': '-',  # En dash
+        '—': '-',  # Em dash
+        '•': '*',  # Bullet point
+        '\u2019': "'",  # Unicode right single quotation mark
+        '\u2018': "'",  # Unicode left single quotation mark
+        '\u201C': '"',  # Unicode left double quotation mark
+        '\u201D': '"',  # Unicode right double quotation mark
+    }
+    
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    
+    return text
 
 class AECNetworkAgent:
     def __init__(self, clients):
@@ -90,6 +129,23 @@ class AECNetworkAgent:
         self.llm = clients["llm"]
         self.output_dir = get_script_dir()
         
+        # Add references as a class variable
+        self.references = [
+            "https://www.crunchbase.com/",
+            "https://contechroundup.substack.com/",
+            "https://builtworlds.com/",
+            "https://builtworlds.com/insights/2024-builtworlds-top-50-venture-investors/",
+            "https://builtworlds.com/insights/2024-top-50-venture-investments-deals/",
+            "https://builtworlds.com/insights/2025-building-tech-top-50-list/",
+            "https://builtworlds.com/insights/2024-adoption-leaders-50-list/",
+            "https://builtworlds.com/insights/2024-global-innovators-list-new/",
+            "https://builtworlds.com/insights/2025-preconstruction-tech-top-50-list/",
+            "https://www.constructiondive.com/",
+            "https://www.constructiondive.com/news/contech-startups-to-watch-2024/632886/",
+            "https://brickmortar.vc/portfolio",
+            "https://techcrunch.com/"
+        ]
+
     def analyze_main_company(self, company_url: str) -> Dict:
         """Analyze the main company from URL"""
         print("\n🔍 Analyzing main company...")
@@ -100,10 +156,13 @@ class AECNetworkAgent:
             
             Provide the following information in this exact format:
             Company: [company name]
-            Description: [detailed description of what they do]
+            Description: [Start with a brief description of what they do, then specify their main technology stack (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML, etc.). Be specific about the core technologies they use. The description should be concise and to the point, and should not be more than 300 words. THe description should detail the benefits they bring to the AEC secotr & how their product is used in the sector.]
             Category: [exactly one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
             
-            Be specific and detailed in the description.
+            Example description format:
+            Description: A safety monitoring solution provider that uses AI-powered Computer Vision technology combined with IoT sensors to detect workplace hazards. Their tech stack includes: Computer Vision, Deep Learning Models, Edge Computing devices, and Real-time Alert System.
+            
+            Be specific and detailed in the description, always including the technology components.
             """
             
             response = self.llm.invoke([
@@ -111,8 +170,11 @@ class AECNetworkAgent:
                 HumanMessage(content=company_prompt)
             ])
             
+            # Clean the response text immediately
+            cleaned_response = clean_text(response.content)
+            
             # Parse the response
-            lines = response.content.strip().split('\n')
+            lines = cleaned_response.strip().split('\n')
             main_company = {}
             for line in lines:
                 if ':' in line:
@@ -129,53 +191,52 @@ class AECNetworkAgent:
         print("\n🔍 Finding related companies...")
         
         try:
+            # Calculate number of companies for each category
+            num_startups = round(NUM_RELATED_COMPANIES * 0.3)  # 30% startups
+            num_investors = round(NUM_RELATED_COMPANIES * 0.2)  # 20% investors
+            num_adopters = NUM_RELATED_COMPANIES - num_startups - num_investors  # Remaining for adopters (≈50%)
+            
+            # Create references string from the array
+            references_text = "\n".join(f"- {ref}" for ref in self.references)
+            
             openai_prompt = f"""
-            Find {NUM_RELATED_COMPANIES} real companies that could be relevant to:
+            Find EXACTLY {NUM_RELATED_COMPANIES} real companies that could be relevant to:
             Company: {main_company['Company']}
             Category: {main_company['Category']}
             Description: {main_company['Description']}
 
-            Find approximately 3/10 for category 1, 1/10 for category 2, and 6/10 for category 3:
-            1) startups, innovators, creators, technology suppliers, early stage companies, 
-            2) corporate venture capital, private equity, venture capitalists, investors, 
-            3) adopters, 
-            in the AEC (Architecture, Engineering, Construction) technology space.
- 
+            You MUST provide EXACTLY:
+            - {num_startups} companies from category 1 (startups/innovators)
+            - {num_investors} companies from category 2 (investors)
+            - {num_adopters} companies from category 3 (adopters)
+
+            Categories explained:
+            1) startups, innovators, creators, technology suppliers, early stage companies
+            2) corporate venture capital, private equity, venture capitalists, investors
+            3) adopters (established companies using or potentially using such technologies)
 
             Focus on finding:
-            1. Direct competitors
-            2. Potential partners or collaborators
+            1. Direct competitors with similar technology stacks
+            2. Potential partners with complementary technologies
             3. Companies in their value chain (suppliers/customers)
             4. Companies with complementary technologies
 
-            
-            Use the following urls and to complete this search task.
-            - https://www.crunchbase.com/
-            - https://contechroundup.substack.com/
-            - https://builtworlds.com/
-            - https://builtworlds.com/insights/2024-builtworlds-top-50-venture-investors/
-            - https://builtworlds.com/insights/2024-top-50-venture-investments-deals/
-            - https://builtworlds.com/insights/2025-building-tech-top-50-list/
-            - https://builtworlds.com/insights/2024-adoption-leaders-50-list/
-            - https://builtworlds.com/insights/2024-global-innovators-list-new/
-            - https://builtworlds.com/insights/2025-preconstruction-tech-top-50-list/
-            - https://www.constructiondive.com/
-            - https://www.constructiondive.com/news/contech-startups-to-watch-2024/632886/
-            - https://brickmortar.vc/portfolio 
-            - https://techcrunch.com/ 
-
+            REFERENCES Use the following urls to complete this search task:
+            {references_text}
 
             For each company, include:
             Company: [name]
-            Description: [description]
-            Investors: [investors]
+            Description: [Start with a brief description of what they do, then specify their main technology stack (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML, etc.). Be specific about the core technologies they use. The description should be concise and to the point, and should not be more than 300 words. THe description should detail the benefits they bring to the AEC secotr & how their product is used in the sector.]
             Category: [exactly one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
-            URL: [url]
+            URL: [company website URL - this is required, do not skip]
+            
+            Note: Always provide a valid website URL for each company. If you can't find the exact URL, provide the company's main domain.
             
             Format each entry exactly as shown above, with each field on a new line.
+            Separate companies with a blank line.
             """
             
-            print(f"Finding {NUM_RELATED_COMPANIES} related companies...")
+            print(f"Finding exactly {NUM_RELATED_COMPANIES} related companies ({num_startups} startups, {num_investors} investors, {num_adopters} adopters)...")
             
             response = self.llm.invoke([
                 SystemMessage(content="You are a construction technology industry expert."),
@@ -199,13 +260,16 @@ class AECNetworkAgent:
             
             # Move the PDF generation to after all analysis is complete
             return results
-            
+        
         except Exception as e:
             print(f"\n❌ Error finding related companies: {str(e)}")
             return {"openai": []}
 
     def _parse_openai_response(self, content: str) -> List[Dict]:
         """Helper method to parse OpenAI response into structured data"""
+        # Clean the content immediately
+        content = clean_text(content)
+        
         companies = []
         current_company = {}
         
@@ -213,19 +277,20 @@ class AECNetworkAgent:
         for line in lines:
             line = line.strip()
             if not line:
+                if current_company and "name" in current_company:
+                    companies.append(current_company)
+                    current_company = {"is_main": False}
                 continue
             
-            # If we find a new company entry, save the previous one and start a new one
             if line.lower().startswith("company:"):
-                if current_company:  # Save previous company if exists
+                if current_company and "name" in current_company:
                     companies.append(current_company)
-                current_company = {"is_main": False}  # Initialize new company with is_main flag
+                    current_company = {"is_main": False}
             
-            # Parse the line
             if ":" in line:
                 parts = line.split(":", 1)
                 key = parts[0].strip().lower()
-                value = parts[1].strip()
+                value = clean_text(parts[1].strip())
                 
                 if "company" in key:
                     current_company["name"] = value
@@ -233,22 +298,69 @@ class AECNetworkAgent:
                     current_company["description"] = value
                 elif "category" in key:
                     current_company["category"] = value
-                elif "url" in key:
-                    current_company["url"] = value
-                elif "investors" in key:
-                    current_company["investors"] = value
+                elif "url" in key or "website" in key:
+                    current_company["url"] = value.strip()
+                    if current_company["url"].lower() == "n/a":
+                        current_company["url"] = ""
         
         # Add the last company if exists
         if current_company and "name" in current_company:
             companies.append(current_company)
         
-        # Ensure all companies have required fields
+        # Validate and enforce the exact number of companies
+        if len(companies) > NUM_RELATED_COMPANIES:
+            companies = companies[:NUM_RELATED_COMPANIES]
+        elif len(companies) < NUM_RELATED_COMPANIES:
+            # Fill with placeholder companies if we don't have enough
+            while len(companies) < NUM_RELATED_COMPANIES:
+                category = "ConTech Startup"
+                if len([c for c in companies if c.get("category") == "ConTech Investors"]) < 1:
+                    category = "ConTech Investors"
+                elif len([c for c in companies if c.get("category") == "ConTech Adopter"]) < 1:
+                    category = "ConTech Adopter"
+                
+                companies.append({
+                    "name": f"Additional Company {len(companies) + 1}",
+                    "description": "Additional company details not available",
+                    "category": category,
+                    "url": "N/A",
+                    "is_main": False
+                })
+        
+        # Validate category distribution
+        category_counts = {
+            "ConTech Startup": 0,
+            "ConTech Investors": 0,
+            "ConTech Adopter": 0
+        }
+        
+        for company in companies:
+            cat = company.get("category", "ConTech Startup")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        
+        # Adjust categories if needed
+        target_counts = {"ConTech Startup": 3, "ConTech Investors": 1, "ConTech Adopter": 1}
+        for i, company in enumerate(companies):
+            current_cat = company.get("category", "ConTech Startup")
+            for target_cat, target_count in target_counts.items():
+                if category_counts[current_cat] > target_counts[current_cat] and category_counts[target_cat] < target_count:
+                    companies[i]["category"] = target_cat
+                    category_counts[current_cat] -= 1
+                    category_counts[target_cat] += 1
+        
+        # Ensure all required fields exist with proper defaults
         for company in companies:
             company.setdefault("name", "Unknown")
             company.setdefault("description", "N/A")
-            company.setdefault("category", "Uncategorized")
-            company.setdefault("url", "N/A")
-            company.setdefault("is_main", False)
+            company.setdefault("category", "ConTech Startup")
+            company.setdefault("url", "")  # Default to empty string instead of N/A
+        
+        # Clean up URL if it exists
+        if company["url"]:
+            company["url"] = company["url"].strip()
+            # Ensure URL has http:// or https:// prefix
+            if not company["url"].startswith(("http://", "https://")):
+                company["url"] = "https://" + company["url"]
         
         return companies
 
@@ -278,7 +390,7 @@ class AECNetworkAgent:
                     batch_prompt += f"Company {idx}:\nName: {clean_name}\nDescription: {company.get('description', 'N/A')}\n\n"
                 
                 batch_prompt += "Return ONLY a comma-separated list of categories in order, e.g.: 'ConTech Startup, ConTech Investors, ConTech Adopter'"
-                
+                    
                 response = self.llm.invoke([
                     SystemMessage(content="You are a construction technology expert. Respond only with comma-separated categories."),
                     HumanMessage(content=batch_prompt)
@@ -400,10 +512,10 @@ class AECNetworkAgent:
                             
                             try:
                                 response = self.llm.invoke([
-                                    SystemMessage(content="You are analyzing business connections. Respond only with Yes or No."),
-                                    HumanMessage(content=connection_prompt)
-                                ])
-                                
+                                SystemMessage(content="You are analyzing business connections. Respond only with Yes or No."),
+                                HumanMessage(content=connection_prompt)
+                        ])
+                        
                                 # Clean up response and check for connection
                                 response_text = response.content.strip().lower()
                                 if 'yes' in response_text:
@@ -411,134 +523,94 @@ class AECNetworkAgent:
                                     print(f"\n✅ Connection found: {company1['Name']} - {company2['Name']}")
                             except Exception as e:
                                 print(f"\n❌ Error analyzing connection: {str(e)}")
-                            
-                            pbar.update(1)
+                        
+                        pbar.update(1)
         
         return G
 
-    def generate_propositions(self, df: pd.DataFrame) -> Dict[str, str]:
+    def generate_propositions(self, main_company: Dict, related_companies: List[Dict], G: nx.Graph) -> Dict:
+        """Generate propositions for each connected company"""
         propositions = {}
-        relations_data = [] if not SKIP_RELATIONS_CSV else None
+        print("\n🤔 Analyzing potential collaborations...")
         
-        # Find the main company
-        main_company = df[df['is_main'] == True].iloc[0]
-        other_companies = df[df['is_main'] == False]
+        # Get direct connections to main company
+        main_connections = [n for n in G.neighbors(main_company['Company'])]
         
-        def process_company(other_company):
-            # First analyze potential synergy and connection type
-            analysis_prompt = f"""
-            Analyze the potential connection between:
-            
-            Main Company: {main_company['Name']} ({main_company['Category']})
-            Description: {main_company['Description']}
-            
-            Other Company: {other_company['Name']} ({other_company['Category']})
-            Description: {other_company['Description']}
-            
-            Provide your analysis in this exact format:
-            Has Synergy: [Yes/No]
-            Connection Type: [one of: Direct Competitor, Potential Partner, Value Chain Member, Technology Complementary]
-            Synergy Details: [2-3 sentences describing specific ways these companies could work together or compete]
-            Value Proposition: [1-2 sentences on mutual benefits]
-            """
-            
-            response = self.llm.invoke([
-                SystemMessage(content="You are a construction technology expert analyzing business connections."),
-                HumanMessage(content=analysis_prompt)
-            ])
-            
-            # Parse the analysis response
-            analysis_lines = response.content.strip().split('\n')
-            analysis = {}
-            for line in analysis_lines:
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    analysis[key.strip()] = value.strip()
-            
-            has_synergy = analysis.get('Has Synergy', '').lower() == 'yes'
-            
-            company_results = {
-                'propositions': None,
-                'relations': [] if not SKIP_RELATIONS_CSV else None
-            }
-            
-            if has_synergy:
-                if not SKIP_RELATIONS_CSV:
-                    company_results['relations'].append({
-                        'Company1': main_company['Name'],
-                        'Category1': main_company['Category'],
-                        'Company2': other_company['Name'],
-                        'Category2': other_company['Category'],
-                        'Connection_Type': analysis.get('Connection Type', 'Unknown'),
-                        'Synergy_Details': analysis.get('Synergy Details', '')
-                    })
-                
-                # Create a more detailed proposition based on the analysis
-                proposition_prompt = f"""
-                Create a personalized LinkedIn message (max 500 characters) for {other_company['Name']} that includes:
-                1. Brief introduction mentioning {main_company['Name']}
-                2. Specific reference to: {analysis.get('Connection Type')}
-                3. Value proposition: {analysis.get('Value Proposition')}
-                4. Concrete suggestion based on: {analysis.get('Synergy Details')}
-                5. Clear call to action for a meeting or discussion
-                
-                Make it professional but conversational.
-                """
-                
-                prop_response = self.llm.invoke([
-                    SystemMessage(content="Create personalized, business-focused LinkedIn messages."),
-                    HumanMessage(content=proposition_prompt)
-                ])
-                
-                company_results['propositions'] = (
-                    other_company["Name"],
-                    {
-                        'message': prop_response.content,
-                        'connection_type': analysis.get('Connection Type', 'Unknown'),
-                        'synergy_details': analysis.get('Synergy Details', ''),
-                        'value_proposition': analysis.get('Value Proposition', '')
-                    }
+        for company_name in tqdm(main_connections, desc="Generating propositions"):
+            try:
+                # Find the connected company details
+                connected_company = next(
+                    (c for c in related_companies if 
+                     c.get('name', '') == company_name or 
+                     c.get('Company', '') == company_name),
+                    None
                 )
-            
-            return company_results
-        
-        # Process companies in parallel
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_company = {
-                executor.submit(process_company, row): row['Name']
-                for _, row in other_companies.iterrows()
-            }
-            
-            with tqdm(total=len(other_companies), desc="Generating propositions") as pbar:
-                for future in as_completed(future_to_company):
-                    company_name = future_to_company[future]
-                    try:
-                        result = future.result()
-                        if result['propositions']:
-                            propositions[result['propositions'][0]] = result['propositions'][1]
-                        if not SKIP_RELATIONS_CSV and result['relations']:
-                            relations_data.extend(result['relations'])
-                    except Exception as e:
-                        print(f"\nError processing {company_name}: {str(e)}")
-                    pbar.update(1)
-        
-        # Save relations to CSV with more details
-        if not SKIP_RELATIONS_CSV and relations_data:
-            relations_df = pd.DataFrame(relations_data)
-            output_path = os.path.join(self.output_dir, 'company_relations.csv')
-            relations_df.to_csv(output_path, index=False)
-        
-        # Save detailed propositions
-        output_path = os.path.join(self.output_dir, 'propositions.txt')
-        with open(output_path, 'w') as f:
-            for name, prop_data in propositions.items():
-                f.write(f"\n{'='*50}\n")
-                f.write(f"Proposition for: {name}\n")
-                f.write(f"{'='*50}\n")
-                f.write(f"Connection Type: {prop_data['connection_type']}\n\n")
-                f.write(f"Synergy Details:\n{prop_data['synergy_details']}\n\n")
-                f.write(f"Value Proposition:\n{prop_data['value_proposition']}\n\n")
-                f.write(f"Proposed LinkedIn Message:\n{prop_data['message']}\n\n")
+                
+                if connected_company:
+                    prompt = f"""
+                    Analyze the potential collaboration between these two companies:
+                    
+                    Company 1: {main_company['Company']}
+                    Description: {main_company['Description']}
+                    Category: {main_company['Category']}
+                    
+                    Company 2: {company_name}
+                    Description: {connected_company.get('description', connected_company.get('Description', 'N/A'))}
+                    Category: {connected_company.get('category', connected_company.get('Category', 'N/A'))}
+                    
+                    Please provide in this exact format:
+                    Connection Type: [type of potential connection, e.g., partnership, client-supplier, investor-startup]
+                    Synergy Details: [detailed explanation of how the companies complement each other]
+                    Value Proposition: [clear value proposition for both companies]
+                        """
+                        
+                    response = self.llm.invoke([
+                    SystemMessage(content="You are analyzing business collaborations. Provide your analysis in the requested format."),
+                    HumanMessage(content=prompt)
+                    ])
+                    
+                    # Clean the response text immediately
+                    cleaned_response = clean_text(response.content)
+                    
+                    # Parse the response into sections
+                    sections = {}
+                    current_section = None
+                    current_text = []
+                    
+                    for line in cleaned_response.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        if line.startswith('Connection Type:'):
+                            current_section = 'connection_type'
+                            current_text = [line.split(':', 1)[1].strip()]
+                        elif line.startswith('Synergy Details:'):
+                            if current_section and current_text:
+                                sections[current_section] = ' '.join(current_text)
+                            current_section = 'synergy_details'
+                            current_text = [line.split(':', 1)[1].strip()]
+                        elif line.startswith('Value Proposition:'):
+                            if current_section and current_text:
+                                sections[current_section] = ' '.join(current_text)
+                            current_section = 'value_proposition'
+                            current_text = [line.split(':', 1)[1].strip()]
+                        else:
+                            current_text.append(line)
+                    
+                    # Add the last section
+                    if current_section and current_text:
+                        sections[current_section] = ' '.join(current_text)
+                    
+                    propositions[company_name] = {
+                        'connection_type': sections.get('connection_type', 'Not specified'),
+                        'synergy_details': sections.get('synergy_details', 'Not specified'),
+                        'value_proposition': sections.get('value_proposition', 'Not specified')
+                    }
+                    
+            except Exception as e:
+                print(f"\n❌ Error analyzing {company_name}: {str(e)}")
+                continue
         
         return propositions
 
@@ -588,7 +660,7 @@ class AECNetworkAgent:
         # Add legend with main company
         legend_elements = [
             plt.Line2D([0], [0], marker='o', color='w', 
-                       markerfacecolor=color, label=cat, markersize=10)
+                         markerfacecolor=color, label=cat, markersize=10)
             for cat, color in colors.items()
         ]
         legend_elements.append(
@@ -598,7 +670,7 @@ class AECNetworkAgent:
         )
         plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
         
-        plt.title("AEC Technology Stakeholder Network", pad=20)
+        plt.title("Stakeholder Network", pad=20)
         plt.axis('off')
         plt.tight_layout()
         
@@ -607,36 +679,76 @@ class AECNetworkAgent:
         plt.savefig(output_path, bbox_inches='tight', dpi=300)  # Higher resolution
         plt.close()
 
+    def _safe_text(self, text):
+        """Clean and encode text for PDF"""
+        if isinstance(text, str):
+            # Remove "**" characters
+            text = text.replace('**', '')
+            # Replace smart quotes and apostrophes with standard ones
+            text = text.replace(''', "'").replace(''', "'").replace('"', '"').replace('"', '"')
+            # Replace other problematic characters
+            replacements = {
+                '?': "'",  # Replace question marks that should be apostrophes
+                '…': '...',  # Replace ellipsis
+                '–': '-',  # Replace en dash
+                '—': '-',  # Replace em dash
+                '•': '*',  # Replace bullet points
+            }
+            for old, new in replacements.items():
+                text = text.replace(old, new)
+            return text.encode('latin-1', 'replace').decode('latin-1')
+        return str(text)
+
     def save_initial_search_pdf(self, main_company: Dict, related_companies: List[Dict], G: nx.Graph = None, propositions: Dict = None):
         """Save comprehensive summary report to PDF"""
+        # Print summary of companies found
+        total_companies = len(related_companies) + 1  # +1 for main company
+        print("\n📄 Generating summary report...")
+        
         from datetime import datetime
         today = datetime.now().strftime("%Y%m%d")
         company_name = "".join(c for c in main_company['Company'] if c.isalnum())
-        filename = f"{today}_AEC_Summary_Report_{company_name}.pdf"
+        filename = f"{today}_Network_Analysis_Report_{company_name}.pdf"
         
         # Create PDF
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         
-        # Function to safely handle text
-        def safe_text(text):
-            if isinstance(text, str):
-                # Replace problematic characters and encode
-                return text.encode('latin-1', 'replace').decode('latin-1')
-            return str(text)
-        
-        try:
-            pdf.add_page()
+        # Helper function to write a labeled field with bold label
+        def write_labeled_field(pdf, label, value, multiline=False, large_label=False):
+            # Increase font size by 30% for specific labels (12 * 1.3 ≈ 16)
+            if large_label and (label == "Company" or label == "Connection"):
+                pdf.set_font("Arial", "B", 16)  # 30% bigger than standard 12
+            else:
+                pdf.set_font("Arial", "B", 12)
             
-            # Title Page
+            # Write the label and move to next line
+            pdf.write(10, f"{label}:")
+            pdf.ln(10)  # Add line break after label
+            
+            # For company names, use larger font size
+            if large_label and (label == "Company" or label == "Connection"):
+                pdf.set_font("Arial", "", 16)  # Keep content same size as label
+            else:
+                pdf.set_font("Arial", "", 12)  # Reset to normal size for other content
+            
+            if multiline:
+                pdf.multi_cell(0, 10, self._safe_text(value))
+            else:
+                pdf.write(10, self._safe_text(value))
+                pdf.ln(10)
+
+        try:
+            # Generate all sections without progress bar
+            # 1. Title Page and Table of Contents
+            pdf.add_page()
             pdf.set_font("Arial", "B", 20)
-            pdf.cell(0, 20, "AEC Technology Network Analysis", ln=True, align='C')
+            pdf.cell(0, 20, "Network Analysis", ln=True, align='C')
             pdf.set_font("Arial", "", 12)
             pdf.cell(0, 10, f"Report Date: {datetime.now().strftime('%Y-%m-%d')}", ln=True, align='C')
-            pdf.cell(0, 10, f"Analysis for: {safe_text(main_company['Company'])}", ln=True, align='C')
+            pdf.cell(0, 10, f"Analysis for: {self._safe_text(main_company['Company'])}", ln=True, align='C')
             pdf.ln(20)
             
-            # Table of Contents
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "Table of Contents", ln=True)
             pdf.set_font("Arial", "", 12)
@@ -645,27 +757,25 @@ class AECNetworkAgent:
             pdf.cell(0, 10, "3. Related Companies", ln=True)
             pdf.cell(0, 10, "4. Connections Analysis", ln=True)
             pdf.cell(0, 10, "5. Potential Opportunities", ln=True)
+            pdf.cell(0, 10, "6. References", ln=True)
             
-            # 1. Main Company Profile
+            # 2. Main Company Profile
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "1. Main Company Profile", ln=True)
             pdf.ln(5)
             
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, safe_text(f"Company: {main_company['Company']}"), ln=True)
-            pdf.cell(0, 10, safe_text(f"Category: {main_company['Category']}"), ln=True)
-            pdf.set_font("Arial", "", 12)
-            pdf.multi_cell(0, 10, safe_text(f"Description: {main_company['Description']}"))
-            pdf.ln(10)
+            write_labeled_field(pdf, "Company", main_company['Company'])
+            write_labeled_field(pdf, "Category", main_company['Category'])
+            write_labeled_field(pdf, "Description", main_company['Description'], multiline=True)
+            pdf.ln(5)
             
-            # 2. Network Overview
+            # 3. Network Overview
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "2. Network Overview", ln=True)
             pdf.ln(5)
             
-            # Summary statistics
             pdf.set_font("Arial", "", 12)
             total_companies = len(related_companies) + 1
             categories_count = {}
@@ -676,15 +786,14 @@ class AECNetworkAgent:
             pdf.multi_cell(0, 10, f"Total companies in network: {total_companies}")
             pdf.multi_cell(0, 10, "Distribution by category:")
             for cat, count in categories_count.items():
-                pdf.multi_cell(0, 10, safe_text(f"- {cat}: {count} companies"))
+                pdf.multi_cell(0, 10, self._safe_text(f"- {cat}: {count} companies"))
             
-            # 3. Related Companies
+            # 4. Related Companies
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "3. Related Companies", ln=True)
             pdf.ln(5)
             
-            # Group companies by category
             companies_by_category = {}
             for company in related_companies:
                 cat = company.get('category', 'Uncategorized')
@@ -694,20 +803,17 @@ class AECNetworkAgent:
             
             for category, companies in companies_by_category.items():
                 pdf.set_font("Arial", "B", 14)
-                pdf.cell(0, 10, safe_text(category), ln=True)
+                pdf.cell(0, 10, self._safe_text(category), ln=True)
                 pdf.ln(5)
                 
                 for company in companies:
-                    pdf.set_font("Arial", "B", 12)
-                    pdf.cell(0, 10, safe_text(f"Company: {company['name']}"), ln=True)
-                    pdf.set_font("Arial", "", 12)
-                    pdf.multi_cell(0, 10, safe_text(f"Description: {company.get('description', 'N/A')}"))
-                    if company.get('investors'):
-                        pdf.multi_cell(0, 10, safe_text(f"Investors: {company.get('investors', 'N/A')}"))
-                    pdf.cell(0, 10, safe_text(f"URL: {company.get('url', 'N/A')}"), ln=True)
-                    pdf.ln(5)
+                    write_labeled_field(pdf, "Company", company['name'], large_label=True)
+                    write_labeled_field(pdf, "Description", company.get('description', 'N/A'), multiline=True)
+                    url = company.get('url', '')
+                    write_labeled_field(pdf, "URL", url if url else 'Not available')
+                    pdf.ln(15)
             
-            # 4. Connections Analysis
+            # 5. Connections Analysis
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "4. Connections Analysis", ln=True)
@@ -721,49 +827,76 @@ class AECNetworkAgent:
                 pdf.set_font("Arial", "B", 14)
                 pdf.cell(0, 10, "Connection Overview", ln=True)
                 pdf.set_font("Arial", "", 12)
-                pdf.multi_cell(0, 10, safe_text(f"Total direct connections with {main_company['Company']}: {len(main_connections)}"))
+                pdf.multi_cell(0, 10, self._safe_text(f"Total direct connections with {main_company['Company']}: {len(main_connections)}"))
                 pdf.multi_cell(0, 10, f"Total connections in network: {G.number_of_edges()}")
                 pdf.multi_cell(0, 10, f"Network density: {nx.density(G):.2f}")
                 pdf.ln(10)
                 
-                # Detailed connections section
+                # Add stakeholder map
+                pdf.set_font("Arial", "B", 14)
+                pdf.cell(0, 10, "Stakeholder Network Map", ln=True)
+                pdf.ln(5)
+                
+                map_path = os.path.join(self.output_dir, 'stakeholder_map.png')
+                if os.path.exists(map_path):
+                    page_width = pdf.w - 2 * pdf.l_margin
+                    img_width = page_width
+                    try:
+                        from PIL import Image
+                        with Image.open(map_path) as img:
+                            w, h = img.size
+                            img_height = (h * img_width) / w
+                            x = pdf.l_margin
+                            pdf.image(map_path, x=x, w=img_width)
+                    except Exception as e:
+                        pdf.multi_cell(0, 10, "Error: Could not include stakeholder map image")
+                    pdf.ln(10)
+                
+                # Detailed connections
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 14)
+                pdf.cell(0, 10, "Direct Connections Details", ln=True)
+                pdf.ln(5)
+                
                 if main_connections:
-                    pdf.set_font("Arial", "B", 14)
-                    pdf.cell(0, 10, "Direct Connections Detail", ln=True)
-                    pdf.ln(5)
-                    
                     for connection in main_connections:
-                        # Get connected company details
+                        # Find the connected company by matching either name or Company field
                         connected_company = next(
-                            (c for c in related_companies if c['name'] == connection),
+                            (c for c in related_companies if 
+                             c.get('name', '') == connection or 
+                             c.get('Company', '') == connection),
                             None
                         )
                         
                         if connected_company:
-                            # Connection header
-                            pdf.set_font("Arial", "B", 12)
-                            pdf.cell(0, 10, safe_text(f"Connection: {connection}"), ln=True)
+                            write_labeled_field(pdf, "Connection", connected_company['name'], large_label=True)
+                            write_labeled_field(pdf, "Category", connected_company.get('category', connected_company.get('Category', 'N/A')))
+                            write_labeled_field(pdf, "Description", connected_company.get('description', connected_company.get('Description', 'N/A')), multiline=True)
                             
-                            # Connection details
-                            pdf.set_font("Arial", "", 12)
-                            pdf.multi_cell(0, 10, safe_text(f"Category: {connected_company.get('category', 'N/A')}"))
-                            pdf.multi_cell(0, 10, safe_text(f"Description: {connected_company.get('description', 'N/A')}"))
+                            # Check propositions using both possible company name fields
+                            prop = None
+                            if propositions:
+                                prop = propositions.get(connected_company['name']) or propositions.get(connection)
+                                
+                            if prop:
+                                write_labeled_field(pdf, "Connection Type", prop.get('connection_type', 'N/A'), multiline=True)
+                                write_labeled_field(pdf, "Synergy", prop.get('synergy_details', 'N/A'), multiline=True)
                             
-                            # Add proposition details if available
-                            if propositions and connection in propositions:
-                                prop = propositions[connection]
-                                pdf.multi_cell(0, 10, safe_text(f"Connection Type: {prop.get('connection_type', 'N/A')}"))
-                                pdf.multi_cell(0, 10, safe_text(f"Synergy: {prop.get('synergy_details', 'N/A')}"))
-                            
-                            pdf.cell(0, 10, safe_text(f"URL: {connected_company.get('url', 'N/A')}"), ln=True)
+                            # Use either url or URL field
+                            url = connected_company.get('url', connected_company.get('URL', 'N/A'))
+                            write_labeled_field(pdf, "URL", url)
+                            pdf.ln(15)
+                        else:
+                            # If we can't find the company details, at least show the connection name
+                            write_labeled_field(pdf, "Connection", connection)
+                            pdf.set_font("Arial", "I", 12)
+                            pdf.multi_cell(0, 10, "(Additional details not available)")
                             pdf.ln(5)
                 else:
                     pdf.set_font("Arial", "I", 12)
                     pdf.multi_cell(0, 10, "No direct connections found with the main company.")
-                
-                pdf.ln(10)
             
-            # 5. Potential Opportunities
+            # 6. Potential Opportunities
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
             pdf.cell(0, 10, "5. Potential Opportunities", ln=True)
@@ -771,17 +904,34 @@ class AECNetworkAgent:
             
             if propositions:
                 for company_name, prop_data in propositions.items():
-                    pdf.set_font("Arial", "B", 12)
-                    pdf.cell(0, 10, safe_text(f"Opportunity with {company_name}"), ln=True)
-                    pdf.set_font("Arial", "", 12)
-                    pdf.multi_cell(0, 10, safe_text(f"Connection Type: {prop_data['connection_type']}"))
-                    pdf.multi_cell(0, 10, safe_text(f"Synergy Details: {prop_data['synergy_details']}"))
-                    pdf.multi_cell(0, 10, safe_text(f"Value Proposition: {prop_data['value_proposition']}"))
-                    pdf.ln(5)
+                    pdf.set_font("Arial", "B", 14)
+                    pdf.cell(0, 10, self._safe_text(f"Collaboration with {company_name}"), ln=True)
+                    
+                    write_labeled_field(pdf, "Connection Type", prop_data.get('connection_type', 'N/A'), multiline=True)
+                    write_labeled_field(pdf, "Synergy Details", prop_data.get('synergy_details', 'N/A'), multiline=True)
+                    write_labeled_field(pdf, "Value Proposition", prop_data.get('value_proposition', 'N/A'), multiline=True)
+                    pdf.ln(15)
+            else:
+                pdf.set_font("Arial", "I", 12)
+                pdf.multi_cell(0, 10, "No collaboration propositions were generated.")
+            
+            # Add References section
+            pdf.add_page()
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, "6. References", ln=True)
+            pdf.ln(1)
+            
+            pdf.set_font("Arial", "", 8)
+            pdf.multi_cell(0, 10, "The following sources were consulted for this analysis:")
+            pdf.ln(1)
+            
+            for ref in self.references:
+                pdf.multi_cell(0, 10, self._safe_text(f"• {ref}"))
             
             # Save the PDF
             output_path = os.path.join(self.output_dir, filename)
             pdf.output(output_path)
+            print(f"✅ Report generated successfully")
             return output_path
             
         except Exception as e:
@@ -797,13 +947,14 @@ class AECNetworkAgent:
                 return None
 
 def main():
-    # Print configuration status
+    # Update configuration status display to include new flag
     print("\n🔧 Configuration:")
     print(f"{'✅' if USE_OPENAI else '❌'} OpenAI API: {'Enabled' if USE_OPENAI else 'Disabled'}")
-    print(f"{'❌' if SKIP_CATEGORIZATION else '✅'} Categorization: {'Skipped' if SKIP_CATEGORIZATION else 'Enabled'}")
-    print(f"{'❌' if SKIP_STAKEHOLDER_MAP else '✅'} Stakeholder Map: {'Skipped' if SKIP_STAKEHOLDER_MAP else 'Enabled'}")
-    print(f"{'❌' if SKIP_PROPOSITIONS else '✅'} Propositions: {'Skipped' if SKIP_PROPOSITIONS else 'Enabled'}")
-    print(f"{'❌' if SKIP_RELATIONS_CSV else '✅'} Relations CSV: {'Skipped' if SKIP_RELATIONS_CSV else 'Enabled'}")
+    print(f"{'✅' if USE_DEFAULT_URL else '❌'} Default URL: {'Enabled' if USE_DEFAULT_URL else 'Disabled'}")
+    print(f"{'➖' if SKIP_CATEGORIZATION else '✅'} Categorization: {'Skipped' if SKIP_CATEGORIZATION else 'Enabled'}")
+    print(f"{'➖' if SKIP_STAKEHOLDER_MAP else '✅'} Stakeholder Map: {'Skipped' if SKIP_STAKEHOLDER_MAP else 'Enabled'}")
+    print(f"{'➖' if SKIP_PROPOSITIONS else '✅'} Propositions: {'Skipped' if SKIP_PROPOSITIONS else 'Enabled'}")
+    print(f"{'➖' if SKIP_RELATIONS_CSV else '✅'} Relations CSV: {'Skipped' if SKIP_RELATIONS_CSV else 'Enabled'}")
     print()
     
     # Setup API keys and initialize clients
@@ -856,7 +1007,13 @@ def main():
     
     if not SKIP_PROPOSITIONS:
         print("📝 Generating propositions...")
-        propositions = agent.generate_propositions(categorized_df)
+        propositions = agent.generate_propositions(
+            main_company,
+            data["openai"],  # This contains the list of related companies
+            G if not SKIP_STAKEHOLDER_MAP else None
+        )
+    else:
+        propositions = None
     
     # Generate the comprehensive PDF report at the end
     print("📄 Generating summary report...")
@@ -864,7 +1021,7 @@ def main():
         main_company,
         data["openai"],
         G if not SKIP_STAKEHOLDER_MAP else None,
-        propositions if not SKIP_PROPOSITIONS else None
+        propositions
     )
     print(f"📄 Summary report saved to: {pdf_path}")
     
