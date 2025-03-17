@@ -12,7 +12,7 @@ USE_DEFAULT_URL = True  # Set to True to use default URL, False to prompt for UR
 DEFAULT_URL = "https://www.presien.com/"  # Default company URL to analyze
 
 # Define constants
-NUM_COMPANIES = 10  # Number of companies to search for
+NUM_COMPANIES = 25  # Number of companies to search for
 NUM_RELATED_COMPANIES = 25  # Number of related companies to find
 
 import os
@@ -156,30 +156,13 @@ class AECNetworkAgent:
             
             Provide the following information in this exact format:
             Company: [company name]
-            Description: [Provide a detailed description in 300-400 words that covers:
-            1. Overview: What the company does, their main value proposition, and target market
-            2. Technology Stack: Detailed breakdown of their core technologies (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML). Include specific details about:
-               - Core technologies and frameworks used
-               - Hardware components (if any)
-               - Software platforms and systems
-               - Integration capabilities
-               - Key technical features and capabilities
-            3. AEC Industry Impact: How their solution is used in construction, benefits provided, and specific use cases
-            4. Differentiators: What makes their technology unique in the market]
+            Description: [Start with a brief description of what they do, then specify their main technology stack (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML, etc.). Be specific about the core technologies they use. The description should be concise and to the point, and should not be more than 300 words. THe description should detail the benefits they bring to the AEC secotr & how their product is used in the sector.]
             Category: [exactly one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
             
             Example description format:
-            Description: Acme Construction Technologies is a pioneering safety monitoring solution provider that leverages advanced technology to transform construction site safety management. Their comprehensive system combines multiple cutting-edge technologies to create a robust safety ecosystem.
-
-            Their technology stack is built around advanced Computer Vision and AI/ML capabilities. The core system utilizes deep learning models specifically trained on construction site imagery, powered by their proprietary neural network architecture. The hardware implementation includes high-resolution IP cameras with edge computing capabilities, environmental sensors for monitoring air quality and noise levels, and wearable IoT devices for worker tracking. Their software platform integrates these components through a cloud-based system built on AWS infrastructure, utilizing containerized microservices for scalability.
-
-            Key technical features include real-time object detection with 99.9% accuracy, worker movement tracking, PPE compliance monitoring, and hazard zone detection. The system employs advanced data analytics for pattern recognition and predictive risk assessment, while their REST API enables seamless integration with existing project management and safety systems.
-
-            In the AEC sector, their solution has revolutionized safety monitoring by providing automated, continuous surveillance of construction sites. The system has demonstrated a 75% reduction in safety incidents across implementation sites. Notable features include automated safety violation alerts, daily safety compliance reports, and predictive risk analytics that help project managers proactively address potential safety issues.
-
-            Their technology stands out through its unique combination of edge computing for real-time processing and cloud-based analytics for deeper insights. The system's ability to learn from site-specific data and adapt its monitoring parameters sets it apart from conventional safety monitoring solutions.
+            Description: A safety monitoring solution provider that uses AI-powered Computer Vision technology combined with IoT sensors to detect workplace hazards. Their tech stack includes: Computer Vision, Deep Learning Models, Edge Computing devices, and Real-time Alert System.
             
-            Be specific and detailed in the description, always including the technology components and ensuring the description is at least 300 words.
+            Be specific and detailed in the description, always including the technology components.
             """
             
             response = self.llm.invoke([
@@ -228,14 +211,9 @@ class AECNetworkAgent:
             - {num_adopters} companies from category 3 (adopters)
 
             Categories explained:
-            1) startups, innovators, creators, technology suppliers, early stage companies - use category "ConTech Startup"
-            2) corporate venture capital, private equity, venture capitalists, investors - use category "ConTech Investors"
-            3) adopters (established companies using or potentially using such technologies) - use category "ConTech Adopter"
-
-            IMPORTANT: Use EXACTLY these category names:
-            - "ConTech Startup"
-            - "ConTech Investors"
-            - "ConTech Adopter"
+            1) startups, innovators, creators, technology suppliers, early stage companies
+            2) corporate venture capital, private equity, venture capitalists, investors
+            3) adopters (established companies using or potentially using such technologies)
 
             Focus on finding:
             1. Direct competitors with similar technology stacks
@@ -246,33 +224,22 @@ class AECNetworkAgent:
             REFERENCES Use the following urls to complete this search task:
             {references_text}
 
-            For each company, provide in this exact format:
+            For each company, include:
             Company: [name]
-            Description: [Provide a detailed description in 300-400 words that covers:
-            1. Overview: What the company does, their main value proposition, and target market
-            2. Technology Stack: Detailed breakdown of their core technologies (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML). Include specific details about:
-               - Core technologies and frameworks used
-               - Hardware components (if any)
-               - Software platforms and systems
-               - Integration capabilities
-               - Key technical features and capabilities
-            3. AEC Industry Impact: How their solution is used in construction, benefits provided, and specific use cases
-            4. Differentiators: What makes their technology unique in the market]
-            Category: [use EXACTLY one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
+            Description: [Start with a brief description of what they do, then specify their main technology stack (e.g., Computer Vision, IoT Sensors, Cloud Platform, AI/ML, etc.). Be specific about the core technologies they use. The description should be concise and to the point, and should not be more than 300 words. THe description should detail the benefits they bring to the AEC secotr & how their product is used in the sector.]
+            Category: [exactly one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
             URL: [company website URL - this is required, do not skip]
             
             Note: Always provide a valid website URL for each company. If you can't find the exact URL, provide the company's main domain.
             
             Format each entry exactly as shown above, with each field on a new line.
             Separate companies with a blank line.
-            
-            IMPORTANT: Each company description MUST be at least 300 words long and follow the structured format above.
             """
             
             print(f"Finding exactly {NUM_RELATED_COMPANIES} related companies ({num_startups} startups, {num_investors} investors, {num_adopters} adopters)...")
             
             response = self.llm.invoke([
-                SystemMessage(content="You are a construction technology expert. Provide detailed, comprehensive descriptions of at least 300 words for each company. Use EXACTLY the category names provided: ConTech Startup, ConTech Investors, or ConTech Adopter."),
+                SystemMessage(content="You are a construction technology industry expert."),
                 HumanMessage(content=openai_prompt)
             ])
             
@@ -291,22 +258,12 @@ class AECNetworkAgent:
             }
             results["openai"].insert(0, main_company_data)
             
-            # Validate that we have data before returning
-            if not results["openai"]:
-                raise ValueError("No company data was generated")
-            
+            # Move the PDF generation to after all analysis is complete
             return results
         
         except Exception as e:
             print(f"\n❌ Error finding related companies: {str(e)}")
-            # Return at least the main company if there's an error
-            return {"openai": [{
-                "name": main_company["Company"],
-                "description": main_company["Description"],
-                "category": main_company["Category"],
-                "url": company_url,
-                "is_main": True
-            }]}
+            return {"openai": []}
 
     def _parse_openai_response(self, content: str) -> List[Dict]:
         """Helper method to parse OpenAI response into structured data"""
@@ -455,28 +412,18 @@ class AECNetworkAgent:
                     })
                     pbar.update(1)
         
-        # Create DataFrame with lowercase column names first
+        # Create DataFrame
         df = pd.DataFrame(categorized_data)
         
-        # Create a mapping of current columns to desired columns
-        column_mapping = {
+        # Rename columns to match the expected format
+        df = df.rename(columns={
             "name": "Name",
             "category": "Category",
             "description": "Description",
             "url": "URL",
-            "source": "Source",
-            "is_main": "is_main"
-        }
+            "source": "Source"
+        })
         
-        # Rename the columns
-        df = df.rename(columns=column_mapping)
-        
-        # Ensure all required columns exist
-        for col in ["Name", "Category", "Description", "URL", "Source", "is_main"]:
-            if col not in df.columns:
-                df[col] = "N/A"
-        
-        # Return only the specified columns
         return df[["Name", "Category", "Description", "URL", "Source", "is_main"]]
 
     def create_stakeholder_map(self, df: pd.DataFrame) -> nx.Graph:
