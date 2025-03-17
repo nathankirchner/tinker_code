@@ -228,9 +228,14 @@ class AECNetworkAgent:
             - {num_adopters} companies from category 3 (adopters)
 
             Categories explained:
-            1) startups, innovators, creators, technology suppliers, early stage companies
-            2) corporate venture capital, private equity, venture capitalists, investors
-            3) adopters (established companies using or potentially using such technologies)
+            1) startups, innovators, creators, technology suppliers, early stage companies - use category "ConTech Startup"
+            2) corporate venture capital, private equity, venture capitalists, investors - use category "ConTech Investors"
+            3) adopters (established companies using or potentially using such technologies) - use category "ConTech Adopter"
+
+            IMPORTANT: Use EXACTLY these category names:
+            - "ConTech Startup"
+            - "ConTech Investors"
+            - "ConTech Adopter"
 
             Focus on finding:
             1. Direct competitors with similar technology stacks
@@ -253,7 +258,7 @@ class AECNetworkAgent:
                - Key technical features and capabilities
             3. AEC Industry Impact: How their solution is used in construction, benefits provided, and specific use cases
             4. Differentiators: What makes their technology unique in the market]
-            Category: [exactly one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
+            Category: [use EXACTLY one of: ConTech Startup, ConTech Investors, or ConTech Adopter]
             URL: [company website URL - this is required, do not skip]
             
             Note: Always provide a valid website URL for each company. If you can't find the exact URL, provide the company's main domain.
@@ -267,7 +272,7 @@ class AECNetworkAgent:
             print(f"Finding exactly {NUM_RELATED_COMPANIES} related companies ({num_startups} startups, {num_investors} investors, {num_adopters} adopters)...")
             
             response = self.llm.invoke([
-                SystemMessage(content="You are a construction technology industry expert. Provide detailed, comprehensive descriptions of at least 300 words for each company."),
+                SystemMessage(content="You are a construction technology expert. Provide detailed, comprehensive descriptions of at least 300 words for each company. Use EXACTLY the category names provided: ConTech Startup, ConTech Investors, or ConTech Adopter."),
                 HumanMessage(content=openai_prompt)
             ])
             
@@ -286,12 +291,22 @@ class AECNetworkAgent:
             }
             results["openai"].insert(0, main_company_data)
             
-            # Move the PDF generation to after all analysis is complete
+            # Validate that we have data before returning
+            if not results["openai"]:
+                raise ValueError("No company data was generated")
+            
             return results
         
         except Exception as e:
             print(f"\n❌ Error finding related companies: {str(e)}")
-            return {"openai": []}
+            # Return at least the main company if there's an error
+            return {"openai": [{
+                "name": main_company["Company"],
+                "description": main_company["Description"],
+                "category": main_company["Category"],
+                "url": company_url,
+                "is_main": True
+            }]}
 
     def _parse_openai_response(self, content: str) -> List[Dict]:
         """Helper method to parse OpenAI response into structured data"""
