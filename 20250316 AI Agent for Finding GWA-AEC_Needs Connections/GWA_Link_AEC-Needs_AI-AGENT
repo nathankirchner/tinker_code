@@ -12,7 +12,7 @@ USE_DEFAULT_URL = True  # Set to True to use default URL, False to prompt for UR
 DEFAULT_URL = "https://www.presien.com/"  # Default company URL to analyze
 
 # Define constants
-NUM_COMPANIES = 25  # Number of companies to search for
+NUM_COMPANIES = 10  # Number of companies to search for
 NUM_RELATED_COMPANIES = 25  # Number of related companies to find
 
 import os
@@ -412,18 +412,28 @@ class AECNetworkAgent:
                     })
                     pbar.update(1)
         
-        # Create DataFrame
+        # Create DataFrame with lowercase column names first
         df = pd.DataFrame(categorized_data)
         
-        # Rename columns to match the expected format
-        df = df.rename(columns={
+        # Create a mapping of current columns to desired columns
+        column_mapping = {
             "name": "Name",
             "category": "Category",
             "description": "Description",
             "url": "URL",
-            "source": "Source"
-        })
+            "source": "Source",
+            "is_main": "is_main"
+        }
         
+        # Rename the columns
+        df = df.rename(columns=column_mapping)
+        
+        # Ensure all required columns exist
+        for col in ["Name", "Category", "Description", "URL", "Source", "is_main"]:
+            if col not in df.columns:
+                df[col] = "N/A"
+        
+        # Return only the specified columns
         return df[["Name", "Category", "Description", "URL", "Source", "is_main"]]
 
     def create_stakeholder_map(self, df: pd.DataFrame) -> nx.Graph:
